@@ -26,3 +26,6 @@ kaggle.json
 # OS / 에디터
 .DS_Store
 Thumbs.db
+
+# 예측 결과 (용량이 크고 재생성 가능)
+preds/

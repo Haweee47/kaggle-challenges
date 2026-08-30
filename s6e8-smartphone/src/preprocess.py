@@ -189,3 +189,37 @@ def feature_list(fe=True, with_indicators=False):
     if with_indicators:
         cols = cols + [f'{c}_isna' for c in NUM_COLS + CAT_COLS]
     return cols
+
+
+# ─────────────────────────────────────────────────────────────
+# 04단계 실험으로 확정한 최종 피처셋
+#
+# 파생변수 12개를 전부 넣으면 오히려 점수가 떨어졌다(CV 0.96325).
+# 그룹별로 하나씩 붙여가며 비교한 결과, 아래 4개만 남기는 것이 최고였다.
+#   원본 12개 + n_missing + 구성비율 3개 = 16개  ->  CV 0.963615
+# "피처는 많을수록 좋다"가 아니라 "기여하는 것만 남긴다"가 정답이다.
+# ─────────────────────────────────────────────────────────────
+SELECTED_EXTRA = ['n_missing', 'social_ratio', 'gaming_ratio', 'study_ratio']
+
+
+def build_final(train_df, test_df):
+    """
+    04단계에서 확정한 최종 피처셋으로 train/test를 동시에 만든다.
+
+    train과 test를 같은 함수로 처리해야 파생변수 계산식이 어긋나지 않는다.
+    (한쪽만 고치는 실수가 캐글에서 가장 흔한 버그다)
+
+    반환: (X_train, X_test, 사용한 열 목록)
+    """
+    cols = NUM_COLS + CAT_COLS
+
+    tr = build_features(train_df[cols])
+    te = build_features(test_df[cols])
+
+    # n_missing 은 원본 결측 상태에서 세야 한다
+    tr['n_missing'] = train_df[cols].isnull().sum(axis=1).astype(np.int8)
+    te['n_missing'] = test_df[cols].isnull().sum(axis=1).astype(np.int8)
+
+    use = cols + SELECTED_EXTRA
+    tr, te = align_categories(to_category(tr[use]), to_category(te[use]))
+    return tr, te, use
