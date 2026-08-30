@@ -274,7 +274,7 @@ footer{
   <p class="dek">69만 행의 사용 습관 데이터로 중독 여부를 예측한다. EDA에서 세운 가설을
      교차검증으로 검증하고, 빗나간 지점을 기록하며 CV 점수를 끌어올린 과정.</p>
   <div class="meta-row">
-    <span>2026-08-30</span>
+    <span>2026-08-31 · 전 단계 완료</span>
     <a href="https://www.kaggle.com/competitions/playground-series-s6e8">대회 페이지</a>
     <a href="https://github.com/Haweee47/kaggle-challenges">GitHub 저장소</a>
     <span>ROC-AUC · 이진 분류</span>
@@ -283,8 +283,8 @@ footer{
 
 <dl class="scoreboard">
   <div class="stat"><dt>베이스라인 CV</dt><dd>0.963574<span class="sub">LightGBM · 원본 12피처</span></dd></div>
-  <div class="stat"><dt>현재 최고 CV</dt><dd class="up">0.964516<span class="sub">FE 16피처 + Optuna</span></dd></div>
-  <div class="stat"><dt>누적 개선</dt><dd class="up">+0.000942<span class="sub">03 → 04단계</span></dd></div>
+  <div class="stat"><dt>최종 CV</dt><dd class="up">0.964890<span class="sub">3-모델 단순 평균</span></dd></div>
+  <div class="stat"><dt>누적 개선</dt><dd class="up">+0.001316<span class="sub">03 → 05단계</span></dd></div>
   <div class="stat"><dt>학습 데이터</dt><dd>691,369<span class="sub">test 296,302행</span></dd></div>
   <div class="stat"><dt>타깃 불균형</dt><dd>70.9%<span class="sub">양성 : 음성 = 7 : 3</span></dd></div>
 </dl>
@@ -297,7 +297,7 @@ footer{
     <div class="step"><span class="idx">02</span><span class="nm">전처리 &amp; 검증 전략<span>인코딩 방침 확정, Stratified 5-Fold 고정</span></span><span class="badge done">완료</span></div>
     <div class="step"><span class="idx">03</span><span class="nm">LightGBM 베이스라인<span>기준점 CV 0.963574 · 결측 전략 4종 비교</span></span><span class="badge done">완료</span></div>
     <div class="step"><span class="idx">04</span><span class="nm">피처 엔지니어링 &amp; 튜닝<span>애블레이션 실험 + Optuna 12회 탐색</span></span><span class="badge done">완료</span></div>
-    <div class="step"><span class="idx">05</span><span class="nm">앙상블 &amp; 제출<span>LightGBM / XGBoost / CatBoost 블렌딩</span></span><span class="badge run">실행중</span></div>
+    <div class="step"><span class="idx">05</span><span class="nm">앙상블 &amp; 제출<span>3-모델 블렌딩 · 최종 CV 0.964890</span></span><span class="badge done">완료</span></div>
   </div>
 </section>
 
@@ -317,8 +317,13 @@ footer{
     </div>
     <div class="prow">
       <span class="plabel">04. + Optuna 튜닝<br><small style="color:var(--ink-soft);font-size:.78rem">규제 강화</small></span>
-      <span class="ptrack"><span class="pfill" style="width:100%"></span></span>
+      <span class="ptrack"><span class="pfill" style="width:72%"></span></span>
       <span class="pval">0.964516<em>+0.000942</em></span>
+    </div>
+    <div class="prow">
+      <span class="plabel">05. + 3-모델 앙상블<br><small style="color:var(--ink-soft);font-size:.78rem">단순 평균</small></span>
+      <span class="ptrack"><span class="pfill" style="width:100%"></span></span>
+      <span class="pval">0.964890<em>+0.001316</em></span>
     </div>
   </div>
 </section>
@@ -501,7 +506,50 @@ footer{
 </section>
 
 <section>
-  <h2><span class="num">08</span>트러블슈팅 기록</h2>
+  <h2><span class="num">08</span>앙상블 결과</h2>
+  <p class="section-note">같은 16피처로 세 모델을 학습한 뒤 OOF 예측을 합쳤다. 모델 간 OOF 상관은 0.99289였다.</p>
+  <div class="tablewrap">
+    <table>
+      <thead><tr><th>구분</th><th>방법</th><th>CV AUC</th><th>최고 단일 대비</th><th>학습 시간</th></tr></thead>
+      <tbody>
+        <tr class="best"><td>앙상블</td><td>단순 평균 <strong>(채택)</strong></td><td class="n">0.964890</td><td class="n pos">+0.000369</td><td class="n">—</td></tr>
+        <tr><td>앙상블</td><td>가중 평균 (.40/.45/.15)</td><td class="n">0.964951</td><td class="n pos">+0.000431</td><td class="n">—</td></tr>
+        <tr><td>앙상블</td><td>순위 평균</td><td class="n">0.964889</td><td class="n pos">+0.000369</td><td class="n">—</td></tr>
+        <tr><td>단일</td><td>XGBoost</td><td class="n">0.964521</td><td class="n">기준</td><td class="n">487초</td></tr>
+        <tr><td>단일</td><td>LightGBM</td><td class="n">0.964516</td><td class="n">−0.000005</td><td class="n">225초</td></tr>
+        <tr class="muted"><td>단일</td><td>CatBoost</td><td class="n">0.963579</td><td class="n neg">−0.000942</td><td class="n neg">3,978초</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <div class="insight teal">
+    <span class="tag">가설이 빗나간 지점 ③</span>
+    <h4>상관이 0.99를 넘는데도 앙상블이 이득을 냈다</h4>
+    <p>“상관 0.99 이상이면 앙상블 효과가 거의 없다”는 통상적 기준대로면 이득이 없어야 했다.
+       실제로는 <strong>+0.000369</strong>를 얻었고, 이는 피처 엔지니어링의 이득(+0.000378)과 맞먹는다.</p>
+    <p><strong>왜인가.</strong> AUC는 예측값의 절대 크기가 아니라 <strong>순서</strong>로 계산된다.
+       상관 0.993은 전체적으로 비슷하게 예측한다는 뜻이지,
+       <em>경계에 걸친 애매한 샘플들의 순서까지 같다는 뜻은 아니다.</em>
+       AUC를 가르는 것은 바로 그 애매한 구간이고, 거기서 모델들이 서로 다르게 틀린 덕분에
+       평균이 이득을 냈다. 상관계수 기준표는 참고용 감각일 뿐 결론이 아니다.</p>
+  </div>
+
+  <div class="insight">
+    <span class="tag">비용 대비 효과</span>
+    <h4>가장 느린 모델이 가장 약했다</h4>
+    <p>CatBoost는 <strong>3,978초(약 66분)</strong>로 LightGBM의 <strong>18배</strong> 시간을 쓰고도
+       CV가 가장 낮았다(−0.000942). 최적 가중치에서 0.15를 받았으니 다양성 기여는 있었지만
+       <strong>투자 대비 수익은 명백히 나쁘다.</strong> 시간이 제한적이라면 그 시간에 LightGBM을
+       다른 시드로 여러 번 학습하는 편이 나았을 것이다.</p>
+    <p>가중 평균이 단순 평균보다 +0.000061 높았지만, 그 가중치는 OOF에서 찾은 값이라
+       <strong>OOF에 과적합</strong>돼 있다. 차이가 폴드 표준편차(≈0.0005)의 1/8에 불과해
+       리더보드에서 뒤집힐 수 있으므로, 노트북이 자동으로 <strong>단순 평균</strong>을 채택하도록
+       규칙을 넣어뒀다.</p>
+  </div>
+</section>
+
+<section>
+  <h2><span class="num">09</span>트러블슈팅 기록</h2>
   <p class="section-note">환경 구축과 실행 과정에서 실제로 막혔던 지점들. 같은 함정을 다시 밟지 않기 위한 기록이다.</p>
   <div class="tablewrap">
     <table>
@@ -520,17 +568,18 @@ footer{
 </section>
 
 <section>
-  <h2><span class="num">09</span>다음 작업</h2>
+  <h2><span class="num">10</span>다음 작업</h2>
   <ul>
-    <li>05단계 3-모델 앙상블 완료 및 블렌딩 가중치 확정</li>
     <li>캐글 제출 후 LB 점수 기록 → CV와 LB가 같은 방향으로 움직이는지 확인</li>
     <li>대회 Evaluation 탭에서 평가 지표 최종 확인 (현재는 제출 형식으로 추정)</li>
-    <li>시드 평균(seed averaging), 스태킹, MLP 추가 등 추가 다양성 확보</li>
+    <li>시드 평균(seed averaging) — CatBoost를 빼고 그 시간에 시도해볼 것</li>
+    <li>스태킹 — OOF 예측을 입력으로 하는 2단계 메타 모델</li>
+    <li>MLP 추가 — 트리 모델과 성격이 크게 달라 다양성 확보에 유리</li>
   </ul>
 </section>
 
 <footer>
-  <span>Playground Series S6E8 · 진행 요약</span>
+  <span>Playground Series S6E8 · 01~05단계 완료</span>
   <span>SEED 42 · StratifiedKFold(5) · ROC-AUC</span>
 </footer>
 
