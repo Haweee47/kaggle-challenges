@@ -8,7 +8,7 @@
 - **데이터**: train 691,369행 × 13피처 / test 296,302행
 - **타깃**: `addicted_label` — 양성 70.9%
 
-📄 **[전체 진행 과정 보기 → docs/PROGRESS.md](docs/PROGRESS.md)** ([HTML 버전](docs/progress.html))
+📄 **[전체 진행 과정 → docs/PROGRESS.md](docs/PROGRESS.md)** · [HTML 버전](docs/progress.html) · [실험 일지(노션용)](docs/NOTION_LOG.md)
 
 ---
 
