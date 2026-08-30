@@ -1,0 +1,539 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>스마트폰 중독 예측 파이프라인</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Archivo:wght@500;600;700&family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans+KR:wght@300;400;500;600;700&display=swap">
+
+<style>
+:root{
+  --ground:#eef1f5;
+  --surface:#ffffff;
+  --surface-2:#f7f9fb;
+  --ink:#111820;
+  --ink-mid:#3d4854;
+  --ink-soft:#6b7684;
+  --line:#dbe1e9;
+  --line-soft:#e8edf3;
+  --accent:#0d7d7d;
+  --accent-soft:#d7ecec;
+  --pos:#1a7a52;
+  --pos-soft:#dcefe5;
+  --neg:#a8422b;
+  --neg-soft:#f6e2dc;
+  --warn:#8a6410;
+  --warn-soft:#f6ecd4;
+
+  --f-display:'Archivo','IBM Plex Sans KR','Malgun Gothic',sans-serif;
+  --f-body:'IBM Plex Sans KR','Malgun Gothic',system-ui,sans-serif;
+  --f-mono:'IBM Plex Mono','D2Coding',ui-monospace,monospace;
+
+  --measure:70ch;
+  --pad:clamp(18px,4vw,40px);
+}
+@media (prefers-color-scheme:dark){
+  :root:not([data-theme="light"]){
+    --ground:#0f1319;
+    --surface:#171d26;
+    --surface-2:#1d242e;
+    --ink:#e6ebf2;
+    --ink-mid:#b3bdc9;
+    --ink-soft:#8794a3;
+    --line:#2a323d;
+    --line-soft:#232a34;
+    --accent:#3fb8b0;
+    --accent-soft:#16332f;
+    --pos:#4bbd8a;
+    --pos-soft:#14301f;
+    --neg:#e08063;
+    --neg-soft:#331c15;
+    --warn:#d3a742;
+    --warn-soft:#2e2611;
+  }
+}
+:root[data-theme="dark"]{
+  --ground:#0f1319;
+  --surface:#171d26;
+  --surface-2:#1d242e;
+  --ink:#e6ebf2;
+  --ink-mid:#b3bdc9;
+  --ink-soft:#8794a3;
+  --line:#2a323d;
+  --line-soft:#232a34;
+  --accent:#3fb8b0;
+  --accent-soft:#16332f;
+  --pos:#4bbd8a;
+  --pos-soft:#14301f;
+  --neg:#e08063;
+  --neg-soft:#331c15;
+  --warn:#d3a742;
+  --warn-soft:#2e2611;
+}
+
+*{box-sizing:border-box}
+body{
+  background:var(--ground);
+  color:var(--ink);
+  font-family:var(--f-body);
+  font-weight:400;
+  font-size:16px;
+  line-height:1.72;
+  -webkit-font-smoothing:antialiased;
+}
+.wrap{max-width:1080px;margin:0 auto;padding:0 var(--pad) 96px}
+
+/* ── 헤더 ── */
+.masthead{
+  padding:clamp(48px,9vw,88px) 0 clamp(28px,5vw,44px);
+  border-bottom:2px solid var(--ink);
+}
+.eyebrow{
+  font-family:var(--f-mono);
+  font-size:.72rem;
+  font-weight:500;
+  letter-spacing:.16em;
+  text-transform:uppercase;
+  color:var(--accent);
+  margin:0 0 18px;
+}
+h1{
+  font-family:var(--f-display);
+  font-weight:700;
+  font-size:clamp(2.1rem,5.6vw,3.5rem);
+  line-height:1.08;
+  letter-spacing:-.022em;
+  margin:0 0 20px;
+  text-wrap:balance;
+}
+.dek{
+  font-size:clamp(1rem,1.9vw,1.14rem);
+  color:var(--ink-mid);
+  max-width:60ch;
+  margin:0 0 28px;
+}
+.meta-row{
+  display:flex;flex-wrap:wrap;gap:8px 26px;
+  font-family:var(--f-mono);font-size:.78rem;color:var(--ink-soft);
+}
+.meta-row a{color:var(--accent);text-decoration:none;border-bottom:1px solid var(--accent-soft)}
+.meta-row a:hover{border-bottom-color:var(--accent)}
+a:focus-visible,summary:focus-visible{outline:2px solid var(--accent);outline-offset:3px;border-radius:2px}
+
+/* ── 스코어카드 ── */
+.scoreboard{
+  display:grid;
+  grid-template-columns:repeat(auto-fit,minmax(158px,1fr));
+  gap:1px;
+  background:var(--line);
+  border:1px solid var(--line);
+  margin:clamp(28px,5vw,44px) 0;
+}
+.stat{background:var(--surface);padding:20px 22px}
+.stat dt{
+  font-family:var(--f-mono);font-size:.68rem;letter-spacing:.1em;
+  text-transform:uppercase;color:var(--ink-soft);margin:0 0 8px;
+}
+.stat dd{
+  margin:0;font-family:var(--f-mono);font-weight:600;
+  font-size:1.5rem;letter-spacing:-.02em;
+  font-variant-numeric:tabular-nums;line-height:1.15;
+}
+.stat .sub{display:block;font-size:.74rem;font-weight:400;color:var(--ink-soft);margin-top:5px;letter-spacing:0}
+.stat dd.up{color:var(--pos)}
+
+/* ── 섹션 ── */
+section{padding-top:clamp(44px,7vw,72px)}
+h2{
+  font-family:var(--f-display);
+  font-weight:600;font-size:clamp(1.4rem,3vw,1.95rem);
+  letter-spacing:-.015em;line-height:1.2;
+  margin:0 0 8px;text-wrap:balance;
+}
+h2 .num{
+  font-family:var(--f-mono);font-size:.74em;font-weight:500;
+  color:var(--accent);margin-right:.6em;
+}
+.section-note{color:var(--ink-soft);font-size:.92rem;margin:0 0 26px;max-width:var(--measure)}
+h3{
+  font-family:var(--f-display);font-weight:600;
+  font-size:1.06rem;letter-spacing:-.005em;
+  margin:34px 0 10px;
+}
+p{margin:0 0 16px;max-width:var(--measure)}
+ul{margin:0 0 16px;padding-left:1.15em;max-width:var(--measure)}
+li{margin-bottom:7px}
+strong{font-weight:600}
+code{
+  font-family:var(--f-mono);font-size:.86em;
+  background:var(--surface-2);border:1px solid var(--line-soft);
+  padding:.1em .38em;border-radius:3px;
+}
+
+/* ── 파이프라인 ── */
+.pipeline{display:grid;gap:1px;background:var(--line);border:1px solid var(--line)}
+.step{
+  background:var(--surface);
+  display:grid;grid-template-columns:52px 1fr auto;
+  gap:16px;align-items:baseline;padding:15px 20px;
+}
+.step .idx{font-family:var(--f-mono);font-weight:600;color:var(--accent);font-size:.95rem}
+.step .nm{font-weight:500}
+.step .nm span{display:block;font-size:.84rem;color:var(--ink-soft);font-weight:400;margin-top:2px}
+.badge{
+  font-family:var(--f-mono);font-size:.68rem;font-weight:500;
+  letter-spacing:.06em;text-transform:uppercase;
+  padding:3px 9px;border-radius:99px;white-space:nowrap;
+}
+.badge.done{background:var(--pos-soft);color:var(--pos)}
+.badge.run{background:var(--warn-soft);color:var(--warn)}
+.badge.wait{background:var(--surface-2);color:var(--ink-soft);border:1px solid var(--line)}
+
+/* ── 진척 바 ── */
+.progress{border:1px solid var(--line);background:var(--surface);padding:24px var(--pad);margin:8px 0 4px}
+.prow{display:grid;grid-template-columns:minmax(120px,190px) 1fr minmax(96px,auto);gap:16px;align-items:center;padding:11px 0}
+.prow + .prow{border-top:1px solid var(--line-soft)}
+.plabel{font-size:.88rem;color:var(--ink-mid)}
+.ptrack{height:9px;background:var(--surface-2);border:1px solid var(--line-soft);position:relative;overflow:hidden}
+.pfill{height:100%;background:var(--accent);display:block}
+.pfill.base{background:var(--ink-soft)}
+.pval{
+  font-family:var(--f-mono);font-size:.86rem;font-weight:500;
+  font-variant-numeric:tabular-nums;text-align:right;
+}
+.pval em{display:block;font-style:normal;font-size:.74rem;color:var(--pos);font-weight:400}
+
+/* ── 표 ── */
+.tablewrap{overflow-x:auto;border:1px solid var(--line);background:var(--surface);margin:0 0 22px}
+table{border-collapse:collapse;width:100%;min-width:520px;font-size:.9rem}
+th,td{padding:9px 14px;text-align:left;border-bottom:1px solid var(--line-soft)}
+thead th{
+  font-family:var(--f-mono);font-size:.7rem;letter-spacing:.07em;
+  text-transform:uppercase;color:var(--ink-soft);font-weight:500;
+  background:var(--surface-2);border-bottom:1px solid var(--line);
+  position:sticky;top:0;
+}
+tbody tr:last-child td{border-bottom:none}
+td.n{font-family:var(--f-mono);font-variant-numeric:tabular-nums;text-align:right;white-space:nowrap}
+td.n.pos{color:var(--pos)}
+td.n.neg{color:var(--neg)}
+tr.best td{background:var(--accent-soft)}
+tr.best td:first-child{box-shadow:inset 3px 0 0 var(--accent)}
+tr.muted td{color:var(--ink-soft)}
+
+/* ── 인사이트 박스 ── */
+.insight{
+  border:1px solid var(--line);
+  border-left:3px solid var(--warn);
+  background:var(--surface);
+  padding:22px 24px;margin:26px 0;
+}
+.insight .tag{
+  font-family:var(--f-mono);font-size:.68rem;letter-spacing:.12em;
+  text-transform:uppercase;color:var(--warn);
+  display:block;margin-bottom:9px;
+}
+.insight h4{font-family:var(--f-display);font-weight:600;font-size:1.02rem;margin:0 0 10px}
+.insight p:last-child,.insight ul:last-child{margin-bottom:0}
+.insight.teal{border-left-color:var(--accent)}
+.insight.teal .tag{color:var(--accent)}
+
+/* ── 코드 ── */
+pre{
+  font-family:var(--f-mono);font-size:.82rem;line-height:1.6;
+  background:var(--surface-2);border:1px solid var(--line);
+  padding:16px 18px;overflow-x:auto;margin:0 0 20px;
+}
+pre code{background:none;border:none;padding:0;font-size:1em}
+
+/* ── 푸터 ── */
+footer{
+  margin-top:clamp(52px,8vw,80px);padding-top:26px;
+  border-top:1px solid var(--line);
+  font-family:var(--f-mono);font-size:.76rem;color:var(--ink-soft);
+  display:flex;flex-wrap:wrap;gap:6px 22px;justify-content:space-between;
+}
+@media (max-width:640px){
+  .step{grid-template-columns:38px 1fr;gap:10px}
+  .step .badge{grid-column:2}
+  .prow{grid-template-columns:1fr;gap:6px}
+  .pval{text-align:left}
+}
+@media (prefers-reduced-motion:reduce){*{animation:none!important;transition:none!important}}
+</style>
+<style>html{color-scheme:light dark}body{margin:0}img{max-width:100%}</style>
+</head>
+<body>
+<div class="wrap">
+
+<header class="masthead">
+  <p class="eyebrow">Kaggle Playground Series · S6E8</p>
+  <h1>스마트폰 중독 예측 파이프라인</h1>
+  <p class="dek">69만 행의 사용 습관 데이터로 중독 여부를 예측한다. EDA에서 세운 가설을
+     교차검증으로 검증하고, 빗나간 지점을 기록하며 CV 점수를 끌어올린 과정.</p>
+  <div class="meta-row">
+    <span>2026-08-30</span>
+    <a href="https://www.kaggle.com/competitions/playground-series-s6e8">대회 페이지</a>
+    <a href="https://github.com/Haweee47/kaggle-challenges">GitHub 저장소</a>
+    <span>ROC-AUC · 이진 분류</span>
+  </div>
+</header>
+
+<dl class="scoreboard">
+  <div class="stat"><dt>베이스라인 CV</dt><dd>0.963574<span class="sub">LightGBM · 원본 12피처</span></dd></div>
+  <div class="stat"><dt>현재 최고 CV</dt><dd class="up">0.964516<span class="sub">FE 16피처 + Optuna</span></dd></div>
+  <div class="stat"><dt>누적 개선</dt><dd class="up">+0.000942<span class="sub">03 → 04단계</span></dd></div>
+  <div class="stat"><dt>학습 데이터</dt><dd>691,369<span class="sub">test 296,302행</span></dd></div>
+  <div class="stat"><dt>타깃 불균형</dt><dd>70.9%<span class="sub">양성 : 음성 = 7 : 3</span></dd></div>
+</dl>
+
+<section>
+  <h2><span class="num">01</span>진행 현황</h2>
+  <p class="section-note">전처리부터 앙상블까지 5단계로 나눠 진행한다. 각 단계는 앞 단계의 결론을 근거로만 움직인다.</p>
+  <div class="pipeline">
+    <div class="step"><span class="idx">01</span><span class="nm">데이터 탐색 (EDA)<span>결측 구조 파악, 변수 중요도 사전 진단</span></span><span class="badge done">완료</span></div>
+    <div class="step"><span class="idx">02</span><span class="nm">전처리 &amp; 검증 전략<span>인코딩 방침 확정, Stratified 5-Fold 고정</span></span><span class="badge done">완료</span></div>
+    <div class="step"><span class="idx">03</span><span class="nm">LightGBM 베이스라인<span>기준점 CV 0.963574 · 결측 전략 4종 비교</span></span><span class="badge done">완료</span></div>
+    <div class="step"><span class="idx">04</span><span class="nm">피처 엔지니어링 &amp; 튜닝<span>애블레이션 실험 + Optuna 12회 탐색</span></span><span class="badge done">완료</span></div>
+    <div class="step"><span class="idx">05</span><span class="nm">앙상블 &amp; 제출<span>LightGBM / XGBoost / CatBoost 블렌딩</span></span><span class="badge run">실행중</span></div>
+  </div>
+</section>
+
+<section>
+  <h2><span class="num">02</span>점수 개선 추이</h2>
+  <p class="section-note">막대 길이는 베이스라인 대비 개선폭에 비례한다. AUC는 이미 0.96대라 남은 여지가 좁다.</p>
+  <div class="progress">
+    <div class="prow">
+      <span class="plabel">03. 베이스라인<br><small style="color:var(--ink-soft);font-size:.78rem">원본 12피처</small></span>
+      <span class="ptrack"><span class="pfill base" style="width:4%"></span></span>
+      <span class="pval">0.963574</span>
+    </div>
+    <div class="prow">
+      <span class="plabel">04. + 피처 엔지니어링<br><small style="color:var(--ink-soft);font-size:.78rem">16피처</small></span>
+      <span class="ptrack"><span class="pfill" style="width:40%"></span></span>
+      <span class="pval">0.963951<em>+0.000378</em></span>
+    </div>
+    <div class="prow">
+      <span class="plabel">04. + Optuna 튜닝<br><small style="color:var(--ink-soft);font-size:.78rem">규제 강화</small></span>
+      <span class="ptrack"><span class="pfill" style="width:100%"></span></span>
+      <span class="pval">0.964516<em>+0.000942</em></span>
+    </div>
+  </div>
+</section>
+
+<section>
+  <h2><span class="num">03</span>EDA에서 알아낸 것</h2>
+  <p class="section-note">효과크기는 두 그룹의 평균 차이를 표준편차로 나눈 값이다. 단위가 다른 변수를 공정하게 비교할 수 있다.</p>
+
+  <div class="tablewrap">
+    <table>
+      <thead><tr><th>변수</th><th>타깃 상관</th><th>효과크기</th><th>비중독 → 중독 평균</th></tr></thead>
+      <tbody>
+        <tr class="best"><td>daily_screen_time_hours</td><td class="n">0.611</td><td class="n">1.35</td><td class="n">5.04h → 8.71h</td></tr>
+        <tr class="best"><td>weekend_screen_time</td><td class="n">0.590</td><td class="n">1.30</td><td class="n">6.85h → 10.56h</td></tr>
+        <tr class="best"><td>social_media_hours</td><td class="n">0.532</td><td class="n">1.17</td><td class="n">1.38h → 2.92h</td></tr>
+        <tr><td>work_study_hours</td><td class="n">0.251</td><td class="n">0.55</td><td class="n">1.87h → 2.57h</td></tr>
+        <tr><td>gaming_hours</td><td class="n">0.205</td><td class="n">0.45</td><td class="n">1.16h → 1.58h</td></tr>
+        <tr class="muted"><td>app_opens_per_day</td><td class="n">0.064</td><td class="n">0.14</td><td class="n">97.9 → 104.6</td></tr>
+        <tr class="muted"><td>sleep_hours</td><td class="n">0.043</td><td class="n">0.09</td><td class="n">6.72h → 6.84h</td></tr>
+        <tr class="muted"><td>notifications_per_day</td><td class="n neg">−0.012</td><td class="n">−0.03</td><td class="n">147.1 → 145.4</td></tr>
+        <tr class="muted"><td>age</td><td class="n">0.004</td><td class="n">0.01</td><td class="n">26.58 → 26.63</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <div class="insight teal">
+    <span class="tag">핵심 인사이트</span>
+    <h4>“얼마나 자주 켜느냐”가 아니라 “얼마나 오래 쓰느냐”</h4>
+    <p>알림 개수(−0.012)와 앱 실행 횟수(0.064)는 중독과 사실상 무관하다.
+       반면 스크린타임 3개 변수는 효과크기 1.2를 넘는다. 스마트폰을 자주 확인하는 습관과
+       중독은 별개이며, <strong>총 사용 시간</strong>이 결정적이다.</p>
+  </div>
+
+  <h3>결측치 — 이 대회의 최대 난관</h3>
+  <ul>
+    <li>전 열에 걸쳐 <strong>4.18% ~ 19.38%</strong> 결측</li>
+    <li>결측이 하나도 없는 완전한 행은 <strong>38.9%뿐</strong> → <code>dropna()</code>를 쓰면 데이터의 61%가 사라진다</li>
+    <li>train과 test의 결측률 차이가 작아 동일 전처리를 적용해도 안전하다</li>
+  </ul>
+
+  <h3>다중공선성</h3>
+  <p><code>daily_screen_time_hours</code>와 <code>weekend_screen_time</code>의 상관이 <strong>0.80</strong>이다.
+     거의 같은 정보를 담고 있다는 뜻이라, 두 값의 비율·차이를 파생변수로 만들 여지가 있다.</p>
+</section>
+
+<section>
+  <h2><span class="num">04</span>전처리 방침</h2>
+  <div class="tablewrap">
+    <table>
+      <thead><tr><th>항목</th><th>결정</th><th>근거</th></tr></thead>
+      <tbody>
+        <tr><td>결측치</td><td>원본 유지 우선</td><td>중앙값 대치 시 인위적 봉우리로 분포 왜곡</td></tr>
+        <tr><td>인코딩</td><td><code>category</code> dtype</td><td>열이 늘지 않고 크기 순서 오해도 없음</td></tr>
+        <tr><td>스케일링</td><td>하지 않음</td><td>트리 모델은 값의 <em>순서</em>만 사용</td></tr>
+        <tr><td>검증</td><td>StratifiedKFold(5, seed=42)</td><td>불균형 데이터 + 재현성 확보</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <h3>구조적으로 막아둔 함정 2가지</h3>
+  <p><strong>데이터 누수</strong> — 대치값을 전체 데이터에서 계산하면 검증 폴드의 정보가 학습에 샌다.
+     <code>impute_median()</code>이 계산한 중앙값을 <em>반환</em>하도록 설계해, 학습 폴드에서만 계산하고
+     검증·테스트에는 적용만 하도록 강제했다.</p>
+  <p><strong>카테고리 순서 불일치</strong> — train과 test에서 각각 <code>astype('category')</code>를 하면
+     <code>Male</code>이 한쪽에선 1번, 다른 쪽에선 0번이 될 수 있다. 눈에 안 띄면서 점수만 갉아먹는
+     버그라 <code>align_categories()</code>로 카테고리 목록을 합집합으로 통일했다.</p>
+</section>
+
+<section>
+  <h2><span class="num">05</span>결측 처리 전략 실측</h2>
+  <p class="section-note">탐색용 고속 설정(lr 0.1 / leaves 31) 기준. 절대 점수보다 전략 간 순위를 보기 위한 실험이다.</p>
+  <div class="tablewrap">
+    <table>
+      <thead><tr><th>전략</th><th>CV AUC</th><th>베이스라인 대비</th></tr></thead>
+      <tbody>
+        <tr class="best"><td>D. 원본 + 행별 결측 개수</td><td class="n">0.963299</td><td class="n pos">+0.000549</td></tr>
+        <tr><td>C. 원본 + 결측 표시 변수 12개</td><td class="n">0.962897</td><td class="n pos">+0.000148</td></tr>
+        <tr><td>A. 원본 유지</td><td class="n">0.962750</td><td class="n">기준</td></tr>
+        <tr><td>B. 중앙값 / 최빈값 대치</td><td class="n">0.962478</td><td class="n neg">−0.000272</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <div class="insight">
+    <span class="tag">가설이 빗나간 지점 ①</span>
+    <h4>“결측 표시 변수는 쓸모없을 것”이라 예측했지만 반대였다</h4>
+    <p>01단계에서 결측 여부에 따른 중독률 차이가 최대 0.42%p에 불과해, 결측 정보는
+       도움이 안 될 것으로 봤다. 실측 결과는 <strong>C와 D 모두 베이스라인보다 높았다.</strong></p>
+    <p><strong>왜 빗나갔나.</strong> EDA에서 본 것은 “한 변수의 결측 여부”와 타깃의 1:1 관계다.
+       하지만 트리 모델은 <em>“스크린타임이 8시간이면서 결측이 3개인 사람”</em> 같은
+       <strong>변수 간 조합</strong>을 자동으로 찾아낸다. 단변량 상관분석으로는 절대 보이지 않는 정보다.</p>
+    <p>개별 표시 변수 12개(C)보다 이를 하나로 합친 <code>n_missing</code>(D)이 더 좋았다는 점도 중요하다.
+       열을 12개 늘리면 정보는 희석되고 노이즈만 늘어난다. <strong>같은 정보라면 압축된 형태가 유리하다.</strong></p>
+    <p style="color:var(--ink-soft);font-size:.9rem">단, 개선폭 +0.0005는 폴드 표준편차(0.00056)와 비슷한 수준이다.
+       “확실한 개선”보다 <strong>“약한 신호”</strong>로 보는 것이 정직하다. 다만 모든 실험이 동일한 폴드 분할을 쓴
+       짝지은 비교라 우연보다는 신뢰할 만하다.</p>
+  </div>
+</section>
+
+<section>
+  <h2><span class="num">06</span>피처 엔지니어링 — 애블레이션</h2>
+  <p class="section-note">원본 12피처에 그룹을 <strong>하나씩만</strong> 추가해 각 그룹의 순수 효과를 분리 측정했다.</p>
+  <div class="tablewrap">
+    <table>
+      <thead><tr><th>그룹</th><th>추가 변수</th><th>CV AUC</th><th>대비</th></tr></thead>
+      <tbody>
+        <tr class="best"><td>구성비율</td><td>social_ratio, gaming_ratio, study_ratio</td><td class="n">0.963426</td><td class="n pos">+0.000676</td></tr>
+        <tr><td>전체 12개</td><td>모든 파생변수</td><td class="n">0.963167</td><td class="n pos">+0.000417</td></tr>
+        <tr><td>여가지표</td><td>leisure_hours, leisure_vs_study</td><td class="n">0.963091</td><td class="n pos">+0.000341</td></tr>
+        <tr><td>사용강도</td><td>mins_per_open, opens_per_notif</td><td class="n">0.962869</td><td class="n pos">+0.000119</td></tr>
+        <tr><td>주말패턴</td><td>weekend_ratio, weekend_diff</td><td class="n">0.962859</td><td class="n pos">+0.000109</td></tr>
+        <tr class="muted"><td>시간예산</td><td>awake_hours, screen_per_awake, sleep_screen_sum</td><td class="n">0.962734</td><td class="n neg">−0.000016</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <div class="insight teal">
+    <span class="tag">반직관적 결과</span>
+    <h4>파생변수 12개를 전부 넣은 것이, 좋은 그룹 하나만 넣은 것보다 나빴다</h4>
+    <p>조합 실험에서도 같은 패턴이 나왔다. 피처를 늘릴수록 점수가 <strong>단조 감소</strong>했다.</p>
+    <div class="tablewrap" style="margin:14px 0 4px">
+      <table>
+        <thead><tr><th>조합</th><th>피처 수</th><th>CV AUC</th><th>대비</th></tr></thead>
+        <tbody>
+          <tr class="best"><td>K1. 원본 + n_missing + 구성비율</td><td class="n">16</td><td class="n">0.963546</td><td class="n pos">+0.000796</td></tr>
+          <tr><td>K2. K1 + 여가지표</td><td class="n">18</td><td class="n">0.963537</td><td class="n pos">+0.000787</td></tr>
+          <tr><td>K3. K2 + 주말패턴</td><td class="n">20</td><td class="n">0.963031</td><td class="n pos">+0.000281</td></tr>
+          <tr><td>K4. K3 + 사용강도</td><td class="n">22</td><td class="n">0.963024</td><td class="n pos">+0.000274</td></tr>
+          <tr class="muted"><td>K0. 베이스라인</td><td class="n">12</td><td class="n">0.962750</td><td class="n">기준</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <p style="margin-top:14px"><strong>왜 쓸모없는 피처가 점수를 깎는가.</strong> LightGBM은 트리를 만들 때마다
+       모든 후보 변수를 검토해 최적 분기를 찾는다. 기여도 낮은 변수가 섞이면 ① 그 변수로 분기하는 트리가
+       우연히 만들어지고(노이즈 학습), ② <code>feature_fraction=0.8</code> 때문에 정작 좋은 변수가
+       후보에서 빠지는 일이 잦아진다. <strong>쓸모없는 피처는 중립이 아니라 마이너스다.</strong></p>
+  </div>
+
+  <h3>확정된 최종 피처셋 — 16개</h3>
+<pre><code>원본 12개
+  + n_missing      # 행별 결측 개수
+  + social_ratio   # social_media_hours / daily_screen_time_hours
+  + gaming_ratio   # gaming_hours       / daily_screen_time_hours
+  + study_ratio    # work_study_hours   / daily_screen_time_hours</code></pre>
+  <p><code>src/preprocess.py</code>의 <code>build_final()</code>로 고정해 05단계에서도 동일하게 재현한다.</p>
+</section>
+
+<section>
+  <h2><span class="num">07</span>하이퍼파라미터 튜닝</h2>
+  <p class="section-note">Optuna 12회 탐색(3-Fold, 542초). 최종 검증은 5-Fold + 학습률 0.05로 다시 측정했다.</p>
+  <div class="tablewrap">
+    <table>
+      <thead><tr><th>파라미터</th><th>기본값</th><th>탐색 결과</th><th>변화의 의미</th></tr></thead>
+      <tbody>
+        <tr class="best"><td>lambda_l1</td><td class="n">≈0</td><td class="n">4.906</td><td>L1 규제 대폭 강화</td></tr>
+        <tr class="best"><td>feature_fraction</td><td class="n">0.80</td><td class="n">0.533</td><td>트리당 변수 사용 축소</td></tr>
+        <tr><td>num_leaves</td><td class="n">63</td><td class="n">84</td><td>트리 복잡도 증가</td></tr>
+        <tr><td>bagging_fraction</td><td class="n">0.80</td><td class="n">0.974</td><td>행은 거의 전부 사용</td></tr>
+        <tr><td>min_child_samples</td><td class="n">50</td><td class="n">42</td><td>거의 변화 없음</td></tr>
+        <tr><td>lambda_l2</td><td class="n">≈0</td><td class="n">0.189</td><td>소폭 강화</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <div class="insight">
+    <span class="tag">가설이 빗나간 지점 ②</span>
+    <h4>“피처가 튜닝보다 중요하다”는 통념이 이번엔 맞지 않았다</h4>
+    <p>단계별 개선폭을 보면 <strong>튜닝(+0.000565)이 피처 엔지니어링(+0.000378)보다 컸다.</strong>
+       흔히 말하는 것과 반대다. 이유는 이렇게 볼 수 있다.</p>
+    <ul>
+      <li><strong>원본 신호가 이미 매우 강하다.</strong> 단일 변수 상관이 0.611이고 베이스라인 AUC가 0.9636이다.
+          짜낼 정보가 별로 안 남아 파생변수가 보탤 여지가 작았다 — 실제로 파생변수 3개의 gain 비중은 11%에 그쳤다.</li>
+      <li><strong>규제가 결정적이었다.</strong> 유효 변수가 적은 상황에서는 불필요한 분기를 억제하는
+          L1 규제와 낮은 <code>feature_fraction</code>이 큰 힘을 발휘한다.</li>
+      <li><strong>피처 탐색 공간이 좁았다.</strong> 파생변수를 12개만 만들어봤다. 수백 개를 탐색했다면 결과가 달랐을 수 있다.</li>
+    </ul>
+    <p><strong>일반화하지 말고 측정하라.</strong> “무엇이 더 중요한가”는 데이터마다 다르다.
+       통념을 따르되 자기 데이터에서 직접 재본 숫자를 최종 근거로 삼아야 한다.</p>
+  </div>
+</section>
+
+<section>
+  <h2><span class="num">08</span>트러블슈팅 기록</h2>
+  <p class="section-note">환경 구축과 실행 과정에서 실제로 막혔던 지점들. 같은 함정을 다시 밟지 않기 위한 기록이다.</p>
+  <div class="tablewrap">
+    <table>
+      <thead><tr><th>문제</th><th>원인</th><th>해결</th></tr></thead>
+      <tbody>
+        <tr><td><code>kaggle.json</code>이 다운로드되지 않음</td><td>캐글이 OAuth 방식으로 전환</td><td><code>kaggle auth login</code> 브라우저 인증</td></tr>
+        <tr><td>PowerShell <code>UnauthorizedAccess</code></td><td>스크립트 실행 정책 차단</td><td><code>Set-ExecutionPolicy -Scope CurrentUser RemoteSigned</code></td></tr>
+        <tr><td><code>.venv</code> 활성화 실패</td><td>홈 디렉토리에서 실행</td><td>프로젝트 폴더로 <code>cd</code> 후 실행</td></tr>
+        <tr><td>matplotlib 한글이 네모로 깨짐</td><td>기본 폰트가 한글 미지원</td><td><code>font.family = 'Malgun Gothic'</code></td></tr>
+        <tr><td>노트북 <code>ModuleNotFoundError</code></td><td>커널이 시스템 파이썬을 가리킴</td><td><code>ipykernel install --name kaggle</code></td></tr>
+        <tr><td>노트북에 그래프가 저장되지 않음</td><td><code>MPLBACKEND=Agg</code> 강제</td><td>환경변수 제거 → inline 백엔드 사용</td></tr>
+        <tr><td>CatBoost <code>cat_features must be…</code></td><td>pandas 3.0에서 <code>astype(str)</code>이 NA를 보존</td><td><code>np.where(s.isna(), 'NA', s.astype(str))</code></td></tr>
+      </tbody>
+    </table>
+  </div>
+</section>
+
+<section>
+  <h2><span class="num">09</span>다음 작업</h2>
+  <ul>
+    <li>05단계 3-모델 앙상블 완료 및 블렌딩 가중치 확정</li>
+    <li>캐글 제출 후 LB 점수 기록 → CV와 LB가 같은 방향으로 움직이는지 확인</li>
+    <li>대회 Evaluation 탭에서 평가 지표 최종 확인 (현재는 제출 형식으로 추정)</li>
+    <li>시드 평균(seed averaging), 스태킹, MLP 추가 등 추가 다양성 확보</li>
+  </ul>
+</section>
+
+<footer>
+  <span>Playground Series S6E8 · 진행 요약</span>
+  <span>SEED 42 · StratifiedKFold(5) · ROC-AUC</span>
+</footer>
+
+</div>
+</body>
+</html>
