@@ -274,7 +274,7 @@ footer{
   <p class="dek">69만 행의 사용 습관 데이터로 중독 여부를 예측한다. EDA에서 세운 가설을
      교차검증으로 검증하고, 빗나간 지점을 기록하며 CV 점수를 끌어올린 과정.</p>
   <div class="meta-row">
-    <span>2026-08-31 · 전 단계 완료</span>
+    <span>2026-08-31 · 제출 완료</span>
     <a href="https://www.kaggle.com/competitions/playground-series-s6e8">대회 페이지</a>
     <a href="https://github.com/Haweee47/kaggle-challenges">GitHub 저장소</a>
     <span>ROC-AUC · 이진 분류</span>
@@ -284,7 +284,8 @@ footer{
 <dl class="scoreboard">
   <div class="stat"><dt>베이스라인 CV</dt><dd>0.963574<span class="sub">LightGBM · 원본 12피처</span></dd></div>
   <div class="stat"><dt>최종 CV</dt><dd class="up">0.964890<span class="sub">3-모델 단순 평균</span></dd></div>
-  <div class="stat"><dt>누적 개선</dt><dd class="up">+0.001316<span class="sub">03 → 05단계</span></dd></div>
+  <div class="stat"><dt>Public LB</dt><dd class="up">0.96613<span class="sub">CV 대비 +0.00124</span></dd></div>
+  <div class="stat"><dt>누적 개선</dt><dd class="up">+0.001316<span class="sub">03 → 05단계 (CV)</span></dd></div>
   <div class="stat"><dt>학습 데이터</dt><dd>691,369<span class="sub">test 296,302행</span></dd></div>
   <div class="stat"><dt>타깃 불균형</dt><dd>70.9%<span class="sub">양성 : 음성 = 7 : 3</span></dd></div>
 </dl>
@@ -321,11 +322,14 @@ footer{
       <span class="pval">0.964516<em>+0.000942</em></span>
     </div>
     <div class="prow">
-      <span class="plabel">05. + 3-모델 앙상블<br><small style="color:var(--ink-soft);font-size:.78rem">단순 평균</small></span>
+      <span class="plabel">05. + 3-모델 앙상블<br><small style="color:var(--ink-soft);font-size:.78rem">단순 평균 · 제출</small></span>
       <span class="ptrack"><span class="pfill" style="width:100%"></span></span>
       <span class="pval">0.964890<em>+0.001316</em></span>
     </div>
   </div>
+  <p style="font-family:var(--f-mono);font-size:.82rem;color:var(--ink-soft);margin:14px 0 0">
+    ▸ Public LB <strong style="color:var(--pos)">0.96613</strong> — CV보다 +0.00124 높다 (아래 09절 분석)
+  </p>
 </section>
 
 <section>
@@ -549,7 +553,68 @@ footer{
 </section>
 
 <section>
-  <h2><span class="num">09</span>트러블슈팅 기록</h2>
+  <h2><span class="num">09</span>CV vs LB — 검증 틀은 믿을 만한가</h2>
+  <p class="section-note">제출 결과가 나왔다. 검증 틀이 실제 테스트셋에서도 통했는지 확인할 차례다.</p>
+  <div class="tablewrap">
+    <table>
+      <thead><tr><th>지표</th><th>값</th><th>의미</th></tr></thead>
+      <tbody>
+        <tr><td>CV AUC (OOF)</td><td class="n">0.964890</td><td>학습 데이터 교차검증</td></tr>
+        <tr class="best"><td>Public LB</td><td class="n">0.96613</td><td>실제 테스트셋 일부 채점</td></tr>
+        <tr><td>차이 (LB − CV)</td><td class="n pos">+0.00124</td><td>LB가 <strong>더 높다</strong></td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <div class="insight teal">
+    <span class="tag">건전성 확인</span>
+    <h4>LB가 CV보다 높다 — 과적합 징후가 없다</h4>
+    <p>과적합이나 데이터 누수가 있었다면 <strong>LB가 CV보다 낮게</strong> 나온다.
+       반대 방향이므로 검증 틀이 건전하다. 게다가 이 방향은 <strong>구조적으로 예상되는 결과</strong>다.</p>
+
+    <h4 style="margin-top:18px">이유 1 — 테스트 예측은 5개 모델의 평균이다</h4>
+    <div class="tablewrap" style="margin:12px 0">
+      <table>
+        <thead><tr><th></th><th>무엇으로 예측했나</th><th>효과</th></tr></thead>
+        <tbody>
+          <tr><td>OOF (CV용)</td><td>폴드마다 <strong>단일 모델</strong> 하나</td><td>그 모델의 분산이 그대로 반영됨</td></tr>
+          <tr><td>테스트 예측</td><td><strong>5개 폴드 모델의 평균</strong></td><td>분산이 줄어 예측이 더 안정적</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <p>즉 CV 점수는 “단일 모델의 실력”이고 LB 점수는 “5개 모델을 앙상블한 실력”이다.
+       <strong>애초에 LB 쪽이 조금 유리한 비교다.</strong> 여기에 3개 알고리즘 블렌딩까지 더해지니
+       실질적으로 15개 모델의 평균이 제출된 셈이다.</p>
+
+    <h4 style="margin-top:18px">이유 2 — Public LB는 테스트셋 일부만 채점한다</h4>
+    <p>Public 점수는 test 296,302행 중 일부로만 계산된다. 표본이 작을수록 운에 흔들리므로
+       ±0.001 정도는 노이즈 범위다. <strong>최종 순위는 나머지로 계산되는 Private LB로 정해진다.</strong></p>
+
+    <p style="margin-top:18px"><strong>결론</strong> — 차이가 작고 방향도 유리하다.
+       앞으로도 <strong>CV를 기준으로 실험을 판단</strong>하면 된다.</p>
+  </div>
+
+  <div class="insight">
+    <span class="tag">아직 확인 못 한 것</span>
+    <h4>점 하나로는 CV-LB “상관”을 말할 수 없다</h4>
+    <div class="tablewrap" style="margin:12px 0">
+      <table>
+        <thead><tr><th>제출</th><th>CV</th><th>LB</th><th>확인</th></tr></thead>
+        <tbody>
+          <tr class="muted"><td>v1 베이스라인</td><td class="n">0.963574</td><td class="n">미제출</td><td>—</td></tr>
+          <tr class="muted"><td>v2 FE + 튜닝</td><td class="n">0.964516</td><td class="n">미제출</td><td>—</td></tr>
+          <tr class="best"><td>v3 앙상블</td><td class="n">0.964890</td><td class="n">0.96613</td><td>✅</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <p>세 점의 CV 간격은 각각 <strong>+0.00094</strong>, <strong>+0.00037</strong>로 매우 좁다.
+       v1·v2도 제출해 <strong>세 점이 같은 방향으로 움직이는지</strong> 봐야 검증 틀을 제대로 검증한 것이다.
+       LB에서 순서가 뒤집힐 가능성도 충분하며, <strong>그것 자체가 중요한 정보다.</strong></p>
+  </div>
+</section>
+
+<section>
+  <h2><span class="num">10</span>트러블슈팅 기록</h2>
   <p class="section-note">환경 구축과 실행 과정에서 실제로 막혔던 지점들. 같은 함정을 다시 밟지 않기 위한 기록이다.</p>
   <div class="tablewrap">
     <table>
@@ -568,9 +633,9 @@ footer{
 </section>
 
 <section>
-  <h2><span class="num">10</span>다음 작업</h2>
+  <h2><span class="num">11</span>다음 작업</h2>
   <ul>
-    <li>캐글 제출 후 LB 점수 기록 → CV와 LB가 같은 방향으로 움직이는지 확인</li>
+    <li><strong>v1·v2도 제출</strong> → 세 점으로 CV-LB 상관을 실제로 확인 (지금은 점 하나뿐)</li>
     <li>대회 Evaluation 탭에서 평가 지표 최종 확인 (현재는 제출 형식으로 추정)</li>
     <li>시드 평균(seed averaging) — CatBoost를 빼고 그 시간에 시도해볼 것</li>
     <li>스태킹 — OOF 예측을 입력으로 하는 2단계 메타 모델</li>
@@ -579,7 +644,7 @@ footer{
 </section>
 
 <footer>
-  <span>Playground Series S6E8 · 01~05단계 완료</span>
+  <span>Playground Series S6E8 · CV 0.964890 / LB 0.96613</span>
   <span>SEED 42 · StratifiedKFold(5) · ROC-AUC</span>
 </footer>
 
