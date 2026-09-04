@@ -32,6 +32,15 @@ P = {
     'sell_frac': 0.55,        # 마을 하루 흡수량 대비 판매 비율
     'shed_soft_cap': 78,      # 이 이상 쌓이면 강제 매도
     'feed_carry': 6,          # 유닛이 한 번에 집어오는 밀 개수
+    # ── 단계적 개시 (staged opening) ──
+    # 0일차에 소를 몰아 사면 자본이 통째로 묶이고 14일간 수입이 0이 된다.
+    # 밀은 씨앗 $10에 2일이면 수확되므로 **초반 현금 엔진**으로 쓴다.
+    'wheat_first_days': 3,    # 이 날까지는 밀만 심는다 (2일 만에 도는 현금 엔진)
+    'animal_start_day': 1,    # 동물 구매 시작일
+    'animal_per_day': 3,      # 하루 최대 동물 구매 수 (자본 잠김 방지)
+    'straw_start_day': 3,     # 딸기 구매 시작일
+    'work_capital': 250,      # 확장 전에 남겨둘 운전자금
+    'work_capital_growth': 8,
 }
 
 # 마을이 하루에 흡수하는 기대량 (상점 8개 기준, docs/STRATEGY.md 표)
@@ -66,6 +75,26 @@ def _step(fx, fy, tx, ty):
 
 def _dist(a, b):
     return abs(a[0] - b[0]) + abs(a[1] - b[1])
+
+
+def configure(**kw):
+    """
+    파라미터 덮어쓰기 (자동 탐색용).
+
+    손으로 12개 파라미터를 더듬으면 사실상 무작위 걷기가 된다.
+    S6E8에서 Optuna를 쓴 것과 같은 이유로, 여기서도 탐색은 기계에 맡긴다.
+    """
+    unknown = set(kw) - set(P)
+    if unknown:
+        raise KeyError(f'모르는 파라미터: {unknown}')
+    P.update(kw)
+    return dict(P)
+
+
+def _expected_animals_before(day, P):
+    """day 이전까지 계획상 사들였어야 할 동물 수 (하루 상한 누적)."""
+    d = max(0, day - P['animal_start_day'])
+    return d * P['animal_per_day']
 
 
 def act(obs):
@@ -169,22 +198,31 @@ def act(obs):
     #    소 4마리를 사고 사료값이 없어 6일차에 전멸한 것이 v1 초기판의 실패였다.
     n_animals = cows + sheep + geese
     pending_a = shed.get('COW', 0) + shed.get('SHEEP', 0)
-    want_wheat = (n_animals + pending_a) * 4
-    if len(market) < 9 and want_wheat > shed.get('WHEAT', 0):
-        need = want_wheat - shed.get('WHEAT', 0)
+    # ⚠️ 매수선과 매도선이 겹치면 같은 밀을 사고팔기를 반복하며 손실이 누적된다.
+    #    (매수는 매수후 재고, 매도는 매도전 재고로 호가되므로 왕복하면 손해)
+    #    그래서 매수선(3배)과 매도선(7배) 사이에 넓은 완충 구간을 둔다.
+    feed_floor = (n_animals + pending_a) * 3
+    if len(market) < 9 and feed_floor > shed.get('WHEAT', 0):
+        need = feed_floor - shed.get('WHEAT', 0)
         if afford(prices.get('WHEAT', 25) * need):
             market.append(['BUY_PRODUCT', 'WHEAT', need])
 
-    # 4) 동물 구매 — 사료 예산(약 6일치)까지 남을 때만
-    if len(market) < 9:
+    # 4) 동물 구매 — 하루 몇 마리까지만, 그리고 운전자금이 남을 때만.
+    #    매 턴 살 수 있으면 사버리면 0일차에 소 7마리를 사고 자본이 전부 묶인다.
+    #    (실측: 0일차 지출 $3,146 -> 이후 14일간 수입 0)
+    #    턴마다 1건씩 주문하므로 '하루 n마리'는 그날 이미 산 수로 근사한다.
+    bought_today = pending_a + cows + sheep - _expected_animals_before(day, P)
+    work_cap = P['work_capital'] + P['work_capital_growth'] * day
+    if len(market) < 9 and day >= P['animal_start_day'] and bought_today < P['animal_per_day']:
         have_a = cows + sheep + pending_a
         room = cap_animals - have_a
-        feed_buffer = prices.get('WHEAT', 25) * 6
+        feed_buffer = prices.get('WHEAT', 25) * 8
         want_cow = min(P['target_cows'] - cows - shed.get('COW', 0), room)
         want_sheep = min(P['target_sheep'] - sheep - shed.get('SHEEP', 0), room)
-        if want_cow > 0 and afford(ANIMALS['COW']['cost'] + feed_buffer):
+        need_cash = ANIMALS['COW']['cost'] + feed_buffer + work_cap
+        if want_cow > 0 and money >= need_cash and afford(ANIMALS['COW']['cost'] + feed_buffer):
             market.append(['BUY_ANIMAL', 'COW', 1])
-        elif want_sheep > 0 and afford(ANIMALS['SHEEP']['cost'] + feed_buffer):
+        elif want_sheep > 0 and money >= ANIMALS['SHEEP']['cost'] + feed_buffer + work_cap                 and afford(ANIMALS['SHEEP']['cost'] + feed_buffer):
             market.append(['BUY_ANIMAL', 'SHEEP', 1])
 
     if len(market) < 9 and seeds.get('WHEAT', 0) < 4 and afford(CROPS['WHEAT']['seed'] * 4):
@@ -201,8 +239,9 @@ def act(obs):
         have = shed.get(prod, 0)
         if have <= 0:
             continue
-        if prod == 'WHEAT':                     # 사료분은 남긴다
-            have -= n_animals * 2
+        if prod == 'WHEAT':
+            # 사료 7일치를 넘는 분량만 판다 (매수선 3배와 겹치지 않게)
+            have -= (n_animals + pending_a) * 7
             if have <= 0:
                 continue
         cap = max(1, int(TOWN_DAILY.get(prod, 1) * P['sell_frac']))
@@ -218,6 +257,11 @@ def act(obs):
                               + shed.get('SHEEP', 0)) - structs_now)
     straw_budget = max(0, min(seeds.get('STRAWBERRY', 0), cap_straw - straw))
     wheat_budget = max(0, min(seeds.get('WHEAT', 0), P['wheat_tiles'] - wheat_t))
+    if day < P['wheat_first_days']:
+        # 개시 단계: 목장·딸기보다 밀이 먼저다 (2일 만에 현금이 돈다)
+        build_budget = 0
+        straw_budget = 0
+        wheat_budget = max(wheat_budget, min(seeds.get('WHEAT', 0), 12 - wheat_t))
 
     tasks = []
     empty_structs = []      # (x, y, kind) 비어있는 코옵/목장
