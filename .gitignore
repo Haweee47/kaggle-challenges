@@ -29,3 +29,7 @@ Thumbs.db
 
 # 예측 결과 (용량이 크고 재생성 가능)
 preds/
+
+# Kaggriculture
+kaggriculture/sims/*.json
+kaggriculture/**/episode_*.json
