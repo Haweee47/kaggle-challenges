@@ -68,7 +68,7 @@ def fit_impute(full_cat, verbose=True):
     return out
 
 
-def build_v2(train_df, test_df, verbose=True):
+def build_v2(train_df, test_df, verbose=True, split_freq=True):
     """
     최종 피처셋을 만든다.
 
@@ -108,6 +108,24 @@ def build_v2(train_df, test_df, verbose=True):
     for c in NUM_COLS:
         st = full[c].astype(str)
         X[f'{c}_freq'] = st.map(st.value_counts()).fillna(0).astype(np.int32).values
+
+    # ── 4-b. train / test 분리 빈도와 그 비율 (+0.00021) ──
+    # train과 test는 같은 생성기의 산물이므로 값의 출현 비율이 1 근처여야 한다.
+    # 비율이 튀는 값 = 생성기가 불안정했던 영역이고, 그 자체가 신호가 된다.
+    # 타깃을 쓰지 않으므로 test를 봐도 누수가 아니다(transductive 전처리).
+    #
+    # 반올림 빈도(-0.00009)와 로그 빈도(-0.00025)는 오히려 손해였다.
+    # '정확한 값의 빈도'와 'train/test 대비'만 정보를 갖는다.
+    if split_freq:
+        for c in NUM_COLS:
+            st = full[c].astype(str)
+            ctr = st.iloc[:n_tr].value_counts()
+            cte = st.iloc[n_tr:].value_counts()
+            ftr = st.map(ctr).fillna(0).to_numpy()
+            fte = st.map(cte).fillna(0).to_numpy()
+            X[f'{c}_ftr'] = ftr.astype(np.int32)
+            X[f'{c}_fte'] = fte.astype(np.int32)
+            X[f'{c}_fratio'] = (fte + 1) / (ftr + 1)
 
     # ── 5. 소수점 지문 ──
     # 생성기가 2자리로 반올림한 흔적. 소수부 분포 자체가 정보를 갖는다.
