@@ -1,0 +1,350 @@
+# -*- coding: utf-8 -*-
+"""
+v1 — 수요 기반 포트폴리오 에이전트
+
+## 설계 근거 (docs/STRATEGY.md)
+1. **마을 흡수량 이하로만 판다.** 멜론은 시즌 흡수량이 30개뿐이라 아예 안 키운다.
+   소(우유 327) · 양(양모 228) · 딸기(426) 가 흡수량이 크고 단가도 높다.
+2. **일꾼은 거의 공짜다.** fib 비용이라 10명이 하루 $143. 매일 최대한 고용한다.
+3. **땅은 NE($1k) → SW($2k).** SE($4k)는 자금 여유가 있을 때만.
+4. **`SELL`은 창고만 본다.** 수확물은 반드시 창고에 `DROP` 해야 팔린다.
+5. **`FEED`는 유닛 인벤토리의 밀을 쓴다.** 사료용 밀을 미리 집어와야 한다.
+
+## 구조
+매 턴 (a) 할 일 목록을 우선순위로 만들고 (b) 가장 가까운 유닛에게 배정한다.
+시장 주문은 하루 예산과 판매 속도 제한 안에서 별도로 계산한다.
+"""
+from kaggle_environments.envs.kaggriculture.kaggriculture import CROPS, ANIMALS
+
+# ── 튜닝 파라미터 (5단계에서 Optuna로 최적화 예정) ──
+P = {
+    'max_hands': 10,          # 하루 고용 인원 (fib 비용이 싼 구간)
+    'target_cows': 8,
+    'target_sheep': 6,
+    'target_straw': 20,       # 딸기 그루 수
+    'wheat_tiles': 20,        # 사료 + 무한 배출구
+    'buy_ne_day': 5,          # NE 구매 목표일 (수입이 돌기 시작한 뒤)
+    'buy_sw_day': 10,
+    'buy_se_day': 18,
+    'land_cash': 2600,        # 이 이상 남을 때만 땅을 산다
+    'reserve': 30,            # 항상 남겨둘 현금 (고용이 최우선이라 낮게)
+    'load_per_unit': 2.6,     # 유닛 1명이 하루에 감당하는 타일 수 (이동 포함)
+    'sell_frac': 0.55,        # 마을 하루 흡수량 대비 판매 비율
+    'shed_soft_cap': 78,      # 이 이상 쌓이면 강제 매도
+    'feed_carry': 6,          # 유닛이 한 번에 집어오는 밀 개수
+}
+
+# 마을이 하루에 흡수하는 기대량 (상점 8개 기준, docs/STRATEGY.md 표)
+TOWN_DAILY = {'WHEAT': 31, 'CARROT': 19, 'TOMATO': 13, 'STRAWBERRY': 25,
+              'MELON': 1, 'EGG': 13, 'MILK': 19, 'WOOL': 13, 'FERTILIZER': 0}
+SELLABLE = ['MILK', 'WOOL', 'STRAWBERRY', 'EGG', 'WHEAT', 'FERTILIZER',
+            'TOMATO', 'CARROT', 'MELON']
+DIRS = {(0, -1): 'NORTH', (0, 1): 'SOUTH', (1, 0): 'EAST', (-1, 0): 'WEST'}
+
+
+def _shed_tiles(n):
+    h = n // 2
+    return [(h - 1, h - 1), (h, h - 1), (h - 1, h), (h, h)]
+
+
+def _quad(x, y, n):
+    h = n // 2
+    return ('N' if y < h else 'S') + ('W' if x < h else 'E')
+
+
+def _step(fx, fy, tx, ty):
+    """목표를 향해 한 칸. 큰 축부터 줄인다."""
+    dx, dy = tx - fx, ty - fy
+    if abs(dx) >= abs(dy) and dx:
+        return 'EAST' if dx > 0 else 'WEST'
+    if dy:
+        return 'SOUTH' if dy > 0 else 'NORTH'
+    if dx:
+        return 'EAST' if dx > 0 else 'WEST'
+    return None
+
+
+def _dist(a, b):
+    return abs(a[0] - b[0]) + abs(a[1] - b[1])
+
+
+def act(obs):
+    farms = obs.get('farms') or []
+    me = obs.get('player', 0)
+    if not farms or me >= len(farms):
+        return {'farmer': ['PASS'], 'hands': [], 'market': []}
+
+    farm = farms[me]
+    priv = obs.get('private') or {}
+    tiles = farm['tiles']
+    n = len(tiles)
+    day = obs.get('day', 0)
+    hour = obs.get('hour', 0)
+    money = farm.get('money', 0)
+    shed = dict(priv.get('shed') or {})
+    seeds = dict(priv.get('seeds') or {})
+    invs = priv.get('inventories') or [{}]
+    prices = (obs.get('market') or {}).get('prices') or {}
+    unlocked = set(farm.get('unlocked_quadrants') or ['NW'])
+
+    units = [tuple(farm['farmer'])] + [tuple(h) for h in (farm.get('hands') or [])]
+    n_units = len(units)
+    shed_set = set(_shed_tiles(n))
+
+    # ── 농장 현황 집계 ──
+    cows = sheep = geese = straw = wheat_t = 0
+    empty_coop = empty_past = 0
+    for y in range(n):
+        for x in range(n):
+            t = tiles[y][x]
+            if not isinstance(t, dict):
+                continue
+            k = t.get('kind')
+            if k == 'PLANT':
+                if t['crop'] == 'STRAWBERRY':
+                    straw += 1
+                elif t['crop'] == 'WHEAT':
+                    wheat_t += 1
+            elif k == 'COOP':
+                if t.get('animal'):
+                    geese += 1
+                else:
+                    empty_coop += 1
+            elif k == 'PASTURE':
+                a = t.get('animal')
+                if a == 'COW':
+                    cows += 1
+                elif a == 'SHEEP':
+                    sheep += 1
+                elif not a:
+                    empty_past += 1
+
+    shed_total = sum(v for k, v in shed.items() if k in SELLABLE or k in ANIMALS)
+
+    # ── 유지 능력 (capacity) ──
+    # 1턴 1행동이므로 하루에 쓸 수 있는 행동은 (유닛 수 x 24)다.
+    # 식물은 물주기+수확, 동물은 먹이+수확+관리가 필요하고 이동까지 든다.
+    # 감당 못 할 만큼 지으면 잡초가 되고 동물은 굶어 죽는다 — v1 초기판의 실패 원인.
+    # 그래서 '목표'를 고정값이 아니라 **현재 인력에 비례**해 정한다.
+    planned_units = 1 + min(P['max_hands'], 9)
+    capacity = int(planned_units * P['load_per_unit'])
+    cap_animals = max(2, min(P['target_cows'] + P['target_sheep'], capacity // 2))
+    cap_straw = max(0, min(P['target_straw'], capacity - cap_animals))
+
+    # ═══════════ 시장 주문 ═══════════
+    market = []
+    cash = money
+
+    def afford(c):
+        nonlocal cash
+        if cash - c >= P['reserve']:
+            cash -= c
+            return True
+        return False
+
+    # 1) 하루 시작에 일꾼 고용 (가장 싼 투자)
+    if hour == 0:
+        hires = min(P['max_hands'], 9)
+        fibs, a, b = [], 1, 1
+        for _ in range(hires):
+            fibs.append(a)
+            a, b = b, a + b
+        for c in fibs:
+            if len(market) >= 9:
+                break
+            if afford(c):
+                market.append(['HIRE'])
+
+    # 2) 땅 확장 — 순서 NE, SW, SE
+    if hour <= 2:
+        plan = [('NE', P['buy_ne_day'], 1000), ('SW', P['buy_sw_day'], 2000),
+                ('SE', P['buy_se_day'], 4000)]
+        for q, d0, cost in plan:
+            if q not in unlocked and day >= d0 and money >= cost + P['land_cash']                     and afford(cost):
+                market.append(['BUY_LAND'])
+                break
+
+    # 3) 사료 확보가 동물 구매보다 우선.
+    #    동물은 이틀 굶으면 도망가고 투자금이 통째로 사라진다.
+    #    소 4마리를 사고 사료값이 없어 6일차에 전멸한 것이 v1 초기판의 실패였다.
+    n_animals = cows + sheep + geese
+    pending_a = shed.get('COW', 0) + shed.get('SHEEP', 0)
+    want_wheat = (n_animals + pending_a) * 4
+    if len(market) < 9 and want_wheat > shed.get('WHEAT', 0):
+        need = want_wheat - shed.get('WHEAT', 0)
+        if afford(prices.get('WHEAT', 25) * need):
+            market.append(['BUY_PRODUCT', 'WHEAT', need])
+
+    # 4) 동물 구매 — 사료 예산(약 6일치)까지 남을 때만
+    if len(market) < 9:
+        have_a = cows + sheep + pending_a
+        room = cap_animals - have_a
+        feed_buffer = prices.get('WHEAT', 25) * 6
+        want_cow = min(P['target_cows'] - cows - shed.get('COW', 0), room)
+        want_sheep = min(P['target_sheep'] - sheep - shed.get('SHEEP', 0), room)
+        if want_cow > 0 and afford(ANIMALS['COW']['cost'] + feed_buffer):
+            market.append(['BUY_ANIMAL', 'COW', 1])
+        elif want_sheep > 0 and afford(ANIMALS['SHEEP']['cost'] + feed_buffer):
+            market.append(['BUY_ANIMAL', 'SHEEP', 1])
+
+    if len(market) < 9 and seeds.get('WHEAT', 0) < 4 and afford(CROPS['WHEAT']['seed'] * 4):
+        market.append(['BUY_SEED', 'WHEAT', 4])
+    if len(market) < 9 and straw + seeds.get('STRAWBERRY', 0) < P['target_straw'] \
+            and afford(CROPS['STRAWBERRY']['seed'] * 2):
+        market.append(['BUY_SEED', 'STRAWBERRY', 2])
+
+    # 4) 판매 — 마을 흡수 속도에 맞춰 조금씩. 창고가 차면 강제 매도.
+    urgent = shed_total >= P['shed_soft_cap']
+    for prod in SELLABLE:
+        if len(market) >= 10:
+            break
+        have = shed.get(prod, 0)
+        if have <= 0:
+            continue
+        if prod == 'WHEAT':                     # 사료분은 남긴다
+            have -= n_animals * 2
+            if have <= 0:
+                continue
+        cap = max(1, int(TOWN_DAILY.get(prod, 1) * P['sell_frac']))
+        qty = have if urgent else min(have, cap)
+        if qty > 0:
+            market.append(['SELL', prod, qty])
+
+    # ═══════════ 유닛 행동 ═══════════
+    # 할 일 목록: (우선순위, 좌표, 행동, 인자)
+    structs_now = cows + sheep + empty_past
+    build_budget = max(0, min(cap_animals,
+                              cows + sheep + shed.get('COW', 0)
+                              + shed.get('SHEEP', 0)) - structs_now)
+    straw_budget = max(0, min(seeds.get('STRAWBERRY', 0), cap_straw - straw))
+    wheat_budget = max(0, min(seeds.get('WHEAT', 0), P['wheat_tiles'] - wheat_t))
+
+    tasks = []
+    empty_structs = []      # (x, y, kind) 비어있는 코옵/목장
+    for y in range(n):
+        for x in range(n):
+            t = tiles[y][x]
+            if t == 'LOCKED':
+                continue
+            if isinstance(t, dict):
+                k = t.get('kind')
+                if k == 'PLANT':
+                    if not t.get('watered_today'):
+                        tasks.append((0, (x, y), 'WATER', None))
+                    if t.get('yield_units', 0) > 0:
+                        tasks.append((2, (x, y), 'HARVEST', None))
+                elif k == 'WEED':
+                    tasks.append((7, (x, y), 'DIG', None))
+                elif k in ('COOP', 'PASTURE'):
+                    a = t.get('animal')
+                    if a:
+                        if not t.get('fed_today'):
+                            tasks.append((1, (x, y), 'FEED', None))   # 밀 필요
+                        if t.get('yield_units', 0) > 0:
+                            tasks.append((2, (x, y), 'HARVEST', None))
+                        if not t.get('cared_today'):
+                            tasks.append((6, (x, y), 'CARE', None))
+                        if t.get('fertilizer_available'):
+                            tasks.append((6, (x, y), 'COLLECT_FERTILIZER', None))
+                    else:
+                        # 빈 구조물 — 동물을 '들고 있는' 유닛만 배치할 수 있다.
+                        # (PLACE는 인벤토리에서 꺼낸다. 창고에 있으면 PICKUP이 먼저다)
+                        empty_structs.append((x, y, k))
+            elif t is None:
+                # 빈 타일에 새로 만들 것 — 반드시 **전역 예산 안에서만** 낸다.
+                # 모든 유닛이 같은 관측을 보므로 상한이 없으면 10명이 동시에
+                # 10개를 지어버린다 (계획 4개인데 17개가 지어졌던 실패 원인).
+                if build_budget > 0:
+                    tasks.append((4, (x, y), 'BUILD_PASTURE', None))
+                    build_budget -= 1
+                elif straw_budget > 0:
+                    tasks.append((5, (x, y), 'PLANT', 'STRAWBERRY'))
+                    straw_budget -= 1
+                elif wheat_budget > 0:
+                    tasks.append((5, (x, y), 'PLANT', 'WHEAT'))
+                    wheat_budget -= 1
+
+    tasks.sort(key=lambda z: z[0])
+
+    # 유닛별 배정
+    actions = [None] * n_units
+    used = set()
+    wheat_needed = sum(1 for t in tasks if t[2] == 'FEED')
+
+    for ui, pos in enumerate(units):
+        inv = invs[ui] if ui < len(invs) else {}
+        carrying = sum(inv.values()) if isinstance(inv, dict) else 0
+        have_wheat = (inv or {}).get('WHEAT', 0)
+        on_shed = pos in shed_set
+
+        held_animal = next((a for a in ('COW', 'SHEEP', 'GOOSE')
+                            if (inv or {}).get(a, 0) > 0), None)
+
+        # (A) 동물을 들고 있으면 빈 구조물로 가서 배치
+        if held_animal and empty_structs:
+            want_kind = 'COOP' if held_animal == 'GOOSE' else 'PASTURE'
+            cand = [e for e in empty_structs if e[2] == want_kind]
+            if cand:
+                tx, ty, _ = min(cand, key=lambda e: _dist(pos, (e[0], e[1])))
+                if (tx, ty) == pos:
+                    empty_structs.remove((tx, ty, want_kind))
+                    actions[ui] = ['PLACE', held_animal]
+                else:
+                    mv = _step(pos[0], pos[1], tx, ty)
+                    actions[ui] = [mv] if mv else ['PASS']
+                continue
+
+        # (B) 창고에 동물이 있고 빈 구조물이 있으면 가지러 간다
+        pend = next((a for a in ('COW', 'SHEEP') if shed.get(a, 0) > 0), None)
+        if pend and empty_structs and not held_animal:
+            if on_shed:
+                shed[pend] -= 1
+                actions[ui] = ['PICKUP', pend, 1]
+                continue
+            tgt = min(shed_set, key=lambda t: _dist(pos, t))
+            mv = _step(pos[0], pos[1], tgt[0], tgt[1])
+            if mv:
+                actions[ui] = [mv]
+                continue
+
+        # 창고 옆이고 팔 물건을 들고 있으면 내려놓는다 (SELL은 창고만 본다)
+        if on_shed and carrying - have_wheat > 0 and not held_animal:
+            actions[ui] = ['DROP']
+            continue
+        # 사료가 필요한데 없으면 창고에서 밀을 집어온다
+        if wheat_needed > 0 and have_wheat == 0 and shed.get('WHEAT', 0) > 0:
+            if on_shed:
+                actions[ui] = ['PICKUP', 'WHEAT', P['feed_carry']]
+                wheat_needed -= P['feed_carry']
+                continue
+            tgt = min(shed_set, key=lambda s: _dist(pos, s))
+            mv = _step(pos[0], pos[1], tgt[0], tgt[1])
+            if mv:
+                actions[ui] = [mv]
+                continue
+
+        # 가장 가까운 미배정 할 일
+        best = None
+        for ti, (pr, tp, op, arg) in enumerate(tasks):
+            if ti in used:
+                continue
+            if op == 'FEED' and have_wheat <= 0:
+                continue
+            d = _dist(pos, tp)
+            key = (pr, d)
+            if best is None or key < best[0]:
+                best = (key, ti, tp, op, arg)
+        if best is None:
+            actions[ui] = ['PASS']
+            continue
+        _, ti, tp, op, arg = best
+        used.add(ti)
+        if tp == pos:
+            actions[ui] = [op, arg] if arg else [op]
+        else:
+            mv = _step(pos[0], pos[1], tp[0], tp[1])
+            actions[ui] = [mv] if mv else ['PASS']
+
+    return {'farmer': actions[0] if actions else ['PASS'],
+            'hands': actions[1:],
+            'market': market[:10]}
