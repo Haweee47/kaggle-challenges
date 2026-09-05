@@ -1,49 +1,67 @@
 # -*- coding: utf-8 -*-
 """
-Kaggriculture 제출 에이전트 v2 — Optuna로 16개 파라미터를 탐색한 결과.
+Kaggriculture 제출 에이전트 v3 — 이동 최소화 + 재튜닝
 
-자체 대전 성적 (상대: 튜토리얼 melon_maxxer)
-  튜닝 전   평균  1,913 / 승률  75%
-  튜닝 후   평균 22,560 / 승률 100%   (튜닝에 쓴 시드)
-  검증      평균 29,277 / 승률 100%   (처음 보는 시드 900~)
-  검증      평균 26,934 / 승률 100%   (처음 보는 시드 5000~)
-  -> 튜닝 시드보다 새 시드에서 더 좋으므로 과적합이 아니다.
+자체 대전 (vs 튜토리얼 melon_maxxer)
+  v2            22,560
+  v3 구조개선   35,244
+  v3 + 재튜닝   48,966  (튜닝 시드) / 40,621 / 36,179 (새 시드)
+  전 시드 승률 100%
 
-탐색이 찾아낸 것 (내 예상과 반대였던 부분):
-  target_straw   20 -> 1     딸기를 거의 안 심는다
-  wheat_tiles    20 -> 4     밀도 최소한만
-  target_cows     8 -> 4     소도 절반
-  load_per_unit 2.6 -> 1.53  타일당 인력을 훨씬 여유있게
-  sell_frac    0.55 -> 1.36  대신 훨씬 공격적으로 판다
-  => '크게 벌려놓기'가 아니라 **작게 유지하며 빨리 파는 것**이 정답이었다.
-     넓히면 물주기/먹이주기를 놓쳐 잡초와 아사로 새어나간다.
+vs 상위권 공개본(v16rc5): 14,849 -> 19,255 -> 29,223 (아직 0승, 상대 141k)
+
+## 핵심 변경 (docs/TOP_AGENT_ANALYSIS.md)
+상위권 테이프를 분석해 최대 격차가 '이동 비율'임을 확인했다.
+  v16rc5  이동 42.8% / 작업 52.4%
+  v2      이동 75.4% / 작업 21.7%   <- 3걸음 걸어 1번 일함
+  v3      이동 26.3% / 작업 48.8%
+1) 밀집 배치 — 창고에서 가까운 빈 타일부터 채운다
+2) 연속 처리 — 서 있는 자리에 할 일이 있으면 걷지 않는다
+3) CARE 우선순위 상향 (상대의 2위 행동인데 우리는 미실행이었다)
+
+## 재튜닝이 바꾼 것 (구조가 바뀌면 최적 파라미터도 바뀐다)
+  load_per_unit  1.53 -> 6.40   이동이 싸지니 농장을 4배 크게
+  max_hands         9 -> 13     일손을 더 쓴다
+  sell_frac      1.36 -> 2.38   더 공격적으로 판다
+  hire_slots        9 -> 6      고용에 주문 슬롯을 덜 쓰고 판매에 돌린다
 """
 from kaggle_environments.envs.kaggriculture.kaggriculture import CROPS, ANIMALS
 
 # ── 튜닝 파라미터 (5단계에서 Optuna로 최적화 예정) ──
 P = {
-    'max_hands': 9,          # 하루 고용 인원 (fib 비용이 싼 구간)
-    'target_cows': 4,
-    'target_sheep': 3,
-    'target_straw': 1,       # 딸기 그루 수
-    'wheat_tiles': 4,        # 사료 + 무한 배출구
-    'buy_ne_day': 6,          # NE 구매 목표일 (수입이 돌기 시작한 뒤)
-    'buy_sw_day': 10,
+    'max_hands': 13,          # 하루 고용 인원 (fib 비용이 싼 구간)
+    'hire_slots': 6,          # 하루 첫 턴에 고용에 쓸 시장 주문 슬롯 수
+    'target_cows': 8,
+    'target_sheep': 2,
+    'target_straw': 2,       # 딸기 그루 수
+    'wheat_tiles': 5,        # 사료 + 무한 배출구
+    'buy_ne_day': 5,          # NE 구매 목표일 (수입이 돌기 시작한 뒤)
+    'buy_sw_day': 13,
     'buy_se_day': 18,
-    'land_cash': 1663,        # 이 이상 남을 때만 땅을 산다
+    'land_cash': 1675,        # 이 이상 남을 때만 땅을 산다
     'reserve': 30,            # 항상 남겨둘 현금 (고용이 최우선이라 낮게)
-    'load_per_unit': 1.5255,     # 유닛 1명이 하루에 감당하는 타일 수 (이동 포함)
-    'sell_frac': 1.3572,        # 마을 하루 흡수량 대비 판매 비율
-    'shed_soft_cap': 62,      # 이 이상 쌓이면 강제 매도
-    'feed_carry': 5,          # 유닛이 한 번에 집어오는 밀 개수
+    'load_per_unit': 6.3991,     # 유닛 1명이 하루에 감당하는 타일 수 (이동 포함)
+    'sell_frac': 2.3788,        # 마을 하루 흡수량 대비 판매 비율
+    'shed_soft_cap': 87,      # 이 이상 쌓이면 강제 매도
+    'feed_carry': 4,          # 유닛이 한 번에 집어오는 밀 개수
+    # ── 구역 배정 (zoning) ──
+    # 측정 결과 행동의 74%가 '이동'이었고 실제 작업은 22%뿐이었다.
+    # 모든 유닛이 매 턴 '전역에서 가장 가까운 일'을 새로 고르면
+    # 서로 목표를 뺏고 왕복하며 걷기만 한다(thrashing).
+    # 유닛마다 담당 구역을 고정하면 걷는 거리가 줄고 배정도 안정된다.
+    # 실측 결과 오히려 손해였다(26,562 -> 14,698). 인덱스 나머지로 나눈 '구역'이
+    # 실제로는 흩어진 타일 집합이라 이동이 더 늘었다. 기본은 끈다.
+    # 제대로 하려면 **연속된 블록**으로 나눠야 한다 (미구현).
+    'zoning': 0,              # 1이면 구역 배정 사용
+    'zone_slack': 2,          # 자기 구역에 일이 없을 때 전역에서 찾을 우선순위 여유
     # ── 단계적 개시 (staged opening) ──
     # 0일차에 소를 몰아 사면 자본이 통째로 묶이고 14일간 수입이 0이 된다.
     # 밀은 씨앗 $10에 2일이면 수확되므로 **초반 현금 엔진**으로 쓴다.
-    'wheat_first_days': 0,    # 이 날까지는 밀만 심는다 (2일 만에 도는 현금 엔진)
-    'animal_start_day': 1,    # 동물 구매 시작일
-    'animal_per_day': 3,      # 하루 최대 동물 구매 수 (자본 잠김 방지)
-    'straw_start_day': 11,     # 딸기 구매 시작일
-    'work_capital': 693,      # 확장 전에 남겨둘 운전자금
+    'wheat_first_days': 3,    # 이 날까지는 밀만 심는다 (2일 만에 도는 현금 엔진)
+    'animal_start_day': 0,    # 동물 구매 시작일
+    'animal_per_day': 1,      # 하루 최대 동물 구매 수 (자본 잠김 방지)
+    'straw_start_day': 12,     # 딸기 구매 시작일
+    'work_capital': 477,      # 확장 전에 남겨둘 운전자금
     'work_capital_growth': 8,
 }
 
@@ -159,7 +177,7 @@ def act(obs):
     # 식물은 물주기+수확, 동물은 먹이+수확+관리가 필요하고 이동까지 든다.
     # 감당 못 할 만큼 지으면 잡초가 되고 동물은 굶어 죽는다 — v1 초기판의 실패 원인.
     # 그래서 '목표'를 고정값이 아니라 **현재 인력에 비례**해 정한다.
-    planned_units = 1 + min(P['max_hands'], 9)
+    planned_units = 1 + min(P['max_hands'], P['hire_slots'])
     capacity = int(planned_units * P['load_per_unit'])
     cap_animals = max(2, min(P['target_cows'] + P['target_sheep'], capacity // 2))
     cap_straw = max(0, min(P['target_straw'], capacity - cap_animals))
@@ -177,13 +195,16 @@ def act(obs):
 
     # 1) 하루 시작에 일꾼 고용 (가장 싼 투자)
     if hour == 0:
-        hires = min(P['max_hands'], 9)
+        # 시장 주문은 턴당 10개까지. 고용은 하루 첫 턴에 몰아서 하되,
+        # 남은 슬롯을 판매/구매에 쓰려면 전부 고용에 쓸 수는 없다.
+        # -> hire_slots 파라미터로 조절 (이전에는 9로 하드코딩되어 있었다)
+        hires = min(P['max_hands'], P['hire_slots'])
         fibs, a, b = [], 1, 1
         for _ in range(hires):
             fibs.append(a)
             a, b = b, a + b
         for c in fibs:
-            if len(market) >= 9:
+            if len(market) >= P['hire_slots']:
                 break
             if afford(c):
                 market.append(['HIRE'])
@@ -269,6 +290,7 @@ def act(obs):
 
     tasks = []
     empty_structs = []      # (x, y, kind) 비어있는 코옵/목장
+    empty_tiles = []        # 빈 타일 (나중에 창고 거리순으로 정렬)
     for y in range(n):
         for x in range(n):
             t = tiles[y][x]
@@ -291,7 +313,7 @@ def act(obs):
                         if t.get('yield_units', 0) > 0:
                             tasks.append((2, (x, y), 'HARVEST', None))
                         if not t.get('cared_today'):
-                            tasks.append((6, (x, y), 'CARE', None))
+                            tasks.append((3, (x, y), 'CARE', None))  # v16rc5의 2위 행동
                         if t.get('fertilizer_available'):
                             tasks.append((6, (x, y), 'COLLECT_FERTILIZER', None))
                     else:
@@ -299,18 +321,25 @@ def act(obs):
                         # (PLACE는 인벤토리에서 꺼낸다. 창고에 있으면 PICKUP이 먼저다)
                         empty_structs.append((x, y, k))
             elif t is None:
-                # 빈 타일에 새로 만들 것 — 반드시 **전역 예산 안에서만** 낸다.
-                # 모든 유닛이 같은 관측을 보므로 상한이 없으면 10명이 동시에
-                # 10개를 지어버린다 (계획 4개인데 17개가 지어졌던 실패 원인).
-                if build_budget > 0:
-                    tasks.append((4, (x, y), 'BUILD_PASTURE', None))
-                    build_budget -= 1
-                elif straw_budget > 0:
-                    tasks.append((5, (x, y), 'PLANT', 'STRAWBERRY'))
-                    straw_budget -= 1
-                elif wheat_budget > 0:
-                    tasks.append((5, (x, y), 'PLANT', 'WHEAT'))
-                    wheat_budget -= 1
+                empty_tiles.append((x, y))
+
+    # ── 밀집 배치 ──
+    # 창고에서 가까운 빈 타일부터 채운다. 이동이 행동의 74%를 먹던 원인이
+    # '경작 타일이 창고에서 평균 5칸 떨어져 있던 것'이었다.
+    if empty_tiles:
+        empty_tiles.sort(key=lambda t: min(_dist(t, sp) for sp in shed_set))
+        for (x, y) in empty_tiles:
+            if build_budget > 0:
+                tasks.append((4, (x, y), 'BUILD_PASTURE', None))
+                build_budget -= 1
+            elif straw_budget > 0:
+                tasks.append((5, (x, y), 'PLANT', 'STRAWBERRY'))
+                straw_budget -= 1
+            elif wheat_budget > 0:
+                tasks.append((5, (x, y), 'PLANT', 'WHEAT'))
+                wheat_budget -= 1
+            else:
+                break
 
     tasks.sort(key=lambda z: z[0])
 
@@ -371,7 +400,26 @@ def act(obs):
                 actions[ui] = [mv]
                 continue
 
+        # ── 연속 처리 ──
+        # 지금 서 있는 타일에 할 일이 있으면 걷지 말고 그것부터 한다.
+        # 매 턴 '전역 최근접'을 새로 고르면 목표를 서로 뺏으며 왕복만 한다.
+        here = None
+        for ti, (pr, tp, op, arg) in enumerate(tasks):
+            if ti in used or tp != pos:
+                continue
+            if op == 'FEED' and have_wheat <= 0:
+                continue
+            if here is None or pr < here[0]:
+                here = (pr, ti, op, arg)
+        if here is not None:
+            _, ti, op, arg = here
+            used.add(ti)
+            actions[ui] = [op, arg] if arg else [op]
+            continue
+
         # 가장 가까운 미배정 할 일
+        # 구역 배정: 유닛 index로 담당 구역을 고정한다. 관측만 보고 매번 같은
+        # 구역이 나오므로 상태를 저장하지 않아도 배정이 안정적이다.
         best = None
         for ti, (pr, tp, op, arg) in enumerate(tasks):
             if ti in used:
@@ -379,7 +427,12 @@ def act(obs):
             if op == 'FEED' and have_wheat <= 0:
                 continue
             d = _dist(pos, tp)
-            key = (pr, d)
+            pen = 0
+            if P['zoning'] and n_units > 1:
+                owner = (tp[0] + tp[1] * n) % n_units
+                if owner != ui:
+                    pen = P['zone_slack']       # 남의 구역은 뒤로 미룬다
+            key = (pr + pen, d)
             if best is None or key < best[0]:
                 best = (key, ti, tp, op, arg)
         if best is None:
