@@ -19,6 +19,7 @@ from kaggle_environments.envs.kaggriculture.kaggriculture import CROPS, ANIMALS
 # ── 튜닝 파라미터 (5단계에서 Optuna로 최적화 예정) ──
 P = {
     'max_hands': 10,          # 하루 고용 인원 (fib 비용이 싼 구간)
+    'hire_slots': 9,          # 하루 첫 턴에 고용에 쓸 시장 주문 슬롯 수
     'target_cows': 8,
     'target_sheep': 6,
     'target_straw': 20,       # 딸기 그루 수
@@ -32,6 +33,16 @@ P = {
     'sell_frac': 0.55,        # 마을 하루 흡수량 대비 판매 비율
     'shed_soft_cap': 78,      # 이 이상 쌓이면 강제 매도
     'feed_carry': 6,          # 유닛이 한 번에 집어오는 밀 개수
+    # ── 구역 배정 (zoning) ──
+    # 측정 결과 행동의 74%가 '이동'이었고 실제 작업은 22%뿐이었다.
+    # 모든 유닛이 매 턴 '전역에서 가장 가까운 일'을 새로 고르면
+    # 서로 목표를 뺏고 왕복하며 걷기만 한다(thrashing).
+    # 유닛마다 담당 구역을 고정하면 걷는 거리가 줄고 배정도 안정된다.
+    # 실측 결과 오히려 손해였다(26,562 -> 14,698). 인덱스 나머지로 나눈 '구역'이
+    # 실제로는 흩어진 타일 집합이라 이동이 더 늘었다. 기본은 끈다.
+    # 제대로 하려면 **연속된 블록**으로 나눠야 한다 (미구현).
+    'zoning': 0,              # 1이면 구역 배정 사용
+    'zone_slack': 2,          # 자기 구역에 일이 없을 때 전역에서 찾을 우선순위 여유
     # ── 단계적 개시 (staged opening) ──
     # 0일차에 소를 몰아 사면 자본이 통째로 묶이고 14일간 수입이 0이 된다.
     # 밀은 씨앗 $10에 2일이면 수확되므로 **초반 현금 엔진**으로 쓴다.
@@ -155,7 +166,7 @@ def act(obs):
     # 식물은 물주기+수확, 동물은 먹이+수확+관리가 필요하고 이동까지 든다.
     # 감당 못 할 만큼 지으면 잡초가 되고 동물은 굶어 죽는다 — v1 초기판의 실패 원인.
     # 그래서 '목표'를 고정값이 아니라 **현재 인력에 비례**해 정한다.
-    planned_units = 1 + min(P['max_hands'], 9)
+    planned_units = 1 + min(P['max_hands'], P['hire_slots'])
     capacity = int(planned_units * P['load_per_unit'])
     cap_animals = max(2, min(P['target_cows'] + P['target_sheep'], capacity // 2))
     cap_straw = max(0, min(P['target_straw'], capacity - cap_animals))
@@ -173,13 +184,16 @@ def act(obs):
 
     # 1) 하루 시작에 일꾼 고용 (가장 싼 투자)
     if hour == 0:
-        hires = min(P['max_hands'], 9)
+        # 시장 주문은 턴당 10개까지. 고용은 하루 첫 턴에 몰아서 하되,
+        # 남은 슬롯을 판매/구매에 쓰려면 전부 고용에 쓸 수는 없다.
+        # -> hire_slots 파라미터로 조절 (이전에는 9로 하드코딩되어 있었다)
+        hires = min(P['max_hands'], P['hire_slots'])
         fibs, a, b = [], 1, 1
         for _ in range(hires):
             fibs.append(a)
             a, b = b, a + b
         for c in fibs:
-            if len(market) >= 9:
+            if len(market) >= P['hire_slots']:
                 break
             if afford(c):
                 market.append(['HIRE'])
@@ -368,6 +382,8 @@ def act(obs):
                 continue
 
         # 가장 가까운 미배정 할 일
+        # 구역 배정: 유닛 index로 담당 구역을 고정한다. 관측만 보고 매번 같은
+        # 구역이 나오므로 상태를 저장하지 않아도 배정이 안정적이다.
         best = None
         for ti, (pr, tp, op, arg) in enumerate(tasks):
             if ti in used:
@@ -375,7 +391,12 @@ def act(obs):
             if op == 'FEED' and have_wheat <= 0:
                 continue
             d = _dist(pos, tp)
-            key = (pr, d)
+            pen = 0
+            if P['zoning'] and n_units > 1:
+                owner = (tp[0] + tp[1] * n) % n_units
+                if owner != ui:
+                    pen = P['zone_slack']       # 남의 구역은 뒤로 미룬다
+            key = (pr + pen, d)
             if best is None or key < best[0]:
                 best = (key, ti, tp, op, arg)
         if best is None:

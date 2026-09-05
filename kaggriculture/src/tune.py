@@ -36,20 +36,24 @@ from v0_melon import act as OPPONENT         # noqa: E402
 
 # 탐색 공간 — 영향이 클 것으로 보이는 16개
 SPACE = {
-    'max_hands':        ('int', 4, 12),
-    'target_cows':      ('int', 3, 12),
-    'target_sheep':     ('int', 0, 8),
-    'target_straw':     ('int', 0, 24),
-    'wheat_tiles':      ('int', 4, 24),
-    'load_per_unit':    ('float', 1.4, 4.2),
+    'max_hands':        ('int', 4, 14),
+    'hire_slots':       ('int', 4, 10),
+    'target_cows':      ('int', 3, 14),
+    'target_sheep':     ('int', 0, 10),
+    'target_straw':     ('int', 0, 30),
+    'wheat_tiles':      ('int', 4, 34),
+    # ⚠️ 이전 탐색은 상한 4.2였다. 10명 x 4.2 = 42타일이라
+    #    상위권 메타(68타일)가 애초에 후보에 없었다. 상자를 넓힌다.
+    'load_per_unit':    ('float', 1.2, 9.0),
     'sell_frac':        ('float', 0.3, 2.5),
     'wheat_first_days': ('int', 0, 6),
     'animal_start_day': ('int', 0, 6),
     'animal_per_day':   ('int', 1, 5),
     'straw_start_day':  ('int', 0, 14),
     'work_capital':     ('int', 50, 900),
-    'buy_ne_day':       ('int', 1, 16),
-    'land_cash':        ('int', 300, 3000),
+    'buy_ne_day':       ('int', 0, 14),
+    'buy_sw_day':       ('int', 2, 22),
+    'land_cash':        ('int', 100, 2500),
     'feed_carry':       ('int', 3, 12),
     'shed_soft_cap':    ('int', 45, 95),
 }
@@ -72,6 +76,7 @@ def main():
     ap.add_argument('--trials', type=int, default=60)
     ap.add_argument('--games', type=int, default=8)
     ap.add_argument('--out', default=os.path.join(ROOT, 'sims', 'tune_v1.json'))
+    ap.add_argument('--warm', type=int, default=1)
     args = ap.parse_args()
     os.makedirs(os.path.dirname(args.out), exist_ok=True)
 
@@ -108,6 +113,21 @@ def main():
 
     study = optuna.create_study(direction='maximize',
                                 sampler=optuna.samplers.TPESampler(seed=42))
+    # 1차 탐색이 찾은 최적점을 첫 시행으로 넣는다.
+    # 상자를 넓혔으므로 처음부터 다시 헤매지 않고 거기서부터 개선하게 된다.
+    prev = os.path.join(ROOT, 'sims', 'tune_v1.json')
+    if os.path.exists(prev) and args.warm:
+        pv = json.load(open(prev, encoding='utf-8'))['best']['params']
+        seedp = {k: pv[k] for k in SPACE if k in pv}
+        for k, spec in SPACE.items():
+            if k not in seedp:
+                seedp[k] = BASE.get(k, spec[1])
+            lo, hi = spec[1], spec[2]
+            seedp[k] = min(max(seedp[k], lo), hi)
+            if spec[0] == 'int':
+                seedp[k] = int(round(seedp[k]))
+        study.enqueue_trial(seedp)
+        print('1차 최적점을 시작점으로 투입', flush=True)
     study.optimize(objective, n_trials=args.trials)
 
     print(f'\n=== 완료 ({time.time()-t0:.0f}초, {args.trials}회) ===')
