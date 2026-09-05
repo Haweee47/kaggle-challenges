@@ -1,29 +1,23 @@
 # -*- coding: utf-8 -*-
 """
-Kaggriculture 제출 에이전트 v3 — 이동 최소화 + 재튜닝
+Kaggriculture 제출 에이전트 v3.1 — 이동 최소화 + 재튜닝 + 시기별 고용
 
 자체 대전 (vs 튜토리얼 melon_maxxer)
-  v2            22,560
-  v3 구조개선   35,244
-  v3 + 재튜닝   48,966  (튜닝 시드) / 40,621 / 36,179 (새 시드)
+  v2               22,560
+  v3 구조개선      35,244
+  v3 재튜닝        48,966
+  v3.1 시기별 고용 45,665(튜닝시드) / 41,732(새 시드)  <- 현재
   전 시드 승률 100%
 
-vs 상위권 공개본(v16rc5): 14,849 -> 19,255 -> 29,223 (아직 0승, 상대 141k)
+## 상위권 테이프에서 가져온 3가지를 하나씩 실측한 결과
+  1) 멜론 도입      기각  0그루 44,282 vs 20그루 34,097
+  2) 비료 수집/판매  기각  기준 44,282 vs 우선3/4개 38,486
+  3) 시기별 고용    채택  44,282 -> 45,665 (새 시드 40,175 -> 41,732)
 
-## 핵심 변경 (docs/TOP_AGENT_ANALYSIS.md)
-상위권 테이프를 분석해 최대 격차가 '이동 비율'임을 확인했다.
-  v16rc5  이동 42.8% / 작업 52.4%
-  v2      이동 75.4% / 작업 21.7%   <- 3걸음 걸어 1번 일함
-  v3      이동 26.3% / 작업 48.8%
-1) 밀집 배치 — 창고에서 가까운 빈 타일부터 채운다
-2) 연속 처리 — 서 있는 자리에 할 일이 있으면 걷지 않는다
-3) CARE 우선순위 상향 (상대의 2위 행동인데 우리는 미실행이었다)
-
-## 재튜닝이 바꾼 것 (구조가 바뀌면 최적 파라미터도 바뀐다)
-  load_per_unit  1.53 -> 6.40   이동이 싸지니 농장을 4배 크게
-  max_hands         9 -> 13     일손을 더 쓴다
-  sell_frac      1.36 -> 2.38   더 공격적으로 판다
-  hire_slots        9 -> 6      고용에 주문 슬롯을 덜 쓰고 판매에 돌린다
+같은 재료도 구조가 다르면 결과가 반대다.
+v16rc5는 d10/d20에 몰아 파는 정밀한 타이밍이 있어 멜론이 통하지만,
+우리는 마을 흡수량 기준으로 조금씩 파는 구조라 13일간 타일만 묶인다.
+비료도 마찬가지 — 줍는 행동이 물주기·먹이주기 턴을 잡아먹는다.
 """
 from kaggle_environments.envs.kaggriculture.kaggriculture import CROPS, ANIMALS
 
@@ -52,6 +46,32 @@ P = {
     # 실측 결과 오히려 손해였다(26,562 -> 14,698). 인덱스 나머지로 나눈 '구역'이
     # 실제로는 흩어진 타일 집합이라 이동이 더 늘었다. 기본은 끈다.
     # 제대로 하려면 **연속된 블록**으로 나눠야 한다 (미구현).
+    # ── 멜론 (v16rc5 테이프 분석에서 도입) ──
+    # 나는 '마을 흡수량 30개뿐'이라며 배제했으나, 상위권은 20그루를 심어
+    # 112개를 팔았다. 타일당 수익 1위($109/타일일)라 **초반 자본 형성**에 쓴다.
+    # 수요가 적어도 d10/d20처럼 몰아서 팔면 그 시점엔 상점이 늘어 가격이 회복돼 있다.
+    # ⚠️ 실측 결과 멜론은 **우리 구조에서는 손해**였다 (0그루 44,282 vs 20그루 34,097).
+    #    v16rc5는 d10/d20에 몰아서 파는 정밀한 타이밍이 있어 이득을 보지만,
+    #    우리는 마을 흡수량 기준으로 조금씩 파는 구조라 13일간 타일만 묶인다.
+    #    같은 재료도 구조가 다르면 결과가 반대다. 기본값 0 유지.
+    'target_melon': 0,        # 멜론 타일 수 (0이면 미사용)
+    'melon_last_day': 15,     # 이 날 이후엔 심지 않는다 (10~12일 걸려 못 여문다)
+    # ── 비료 (v16rc5는 296회 수집, d24에 22개 판매) ──
+    # 동물이 매일 1개씩 만든다. 마을 수요는 0이지만 시장 가격 자체가 base $100이고
+    # 곡선이 완만해(linear 0.4) 98개까지 80% 가격을 유지한다. 공짜 부수입이다.
+    # ⚠️ 실측: 우선순위를 올리거나 판매량을 늘리면 오히려 손해였다
+    #    (기준 44,282 vs 우선3/4개 38,486 vs 우선2/8개 37,529).
+    #    비료를 줍는 행동이 물주기·먹이주기 턴을 잡아먹는다. 기본값 유지.
+    'fert_priority': 6,       # COLLECT_FERTILIZER 우선순위 (낮을수록 먼저)
+    'fert_sell_cap': 1,       # 한 번에 파는 비료 개수
+    # ── 시기별 고용 (v16rc5는 5명 -> 14명으로 조절) ──
+    # 우리는 매일 같은 수를 고용한다. 수확이 몰리는 중후반에 증원하면
+    # 초반 자본을 아끼면서 후반 처리량을 늘릴 수 있다.
+    # 실측 채택: 기준 44,282 -> 45,665 (튜닝시드), 40,175 -> 41,732 (새 시드).
+    # 초반 3명/4명은 오히려 크게 손해였다(31,785 / 26,218). 5명이 분기점.
+    'hire_ramp': 1,           # 1이면 시기별 조절 사용
+    'hire_early': 5,          # 초반(=ramp_day 이전) 고용 수
+    'hire_ramp_day': 10,      # 이 날부터 max_hands 만큼 고용
     'zoning': 0,              # 1이면 구역 배정 사용
     'zone_slack': 2,          # 자기 구역에 일이 없을 때 전역에서 찾을 우선순위 여유
     # ── 단계적 개시 (staged opening) ──
@@ -143,7 +163,7 @@ def act(obs):
     shed_set = set(_shed_tiles(n))
 
     # ── 농장 현황 집계 ──
-    cows = sheep = geese = straw = wheat_t = 0
+    cows = sheep = geese = straw = wheat_t = melon_t = 0
     empty_coop = empty_past = 0
     for y in range(n):
         for x in range(n):
@@ -156,6 +176,8 @@ def act(obs):
                     straw += 1
                 elif t['crop'] == 'WHEAT':
                     wheat_t += 1
+                elif t['crop'] == 'MELON':
+                    melon_t += 1
             elif k == 'COOP':
                 if t.get('animal'):
                     geese += 1
@@ -198,7 +220,10 @@ def act(obs):
         # 시장 주문은 턴당 10개까지. 고용은 하루 첫 턴에 몰아서 하되,
         # 남은 슬롯을 판매/구매에 쓰려면 전부 고용에 쓸 수는 없다.
         # -> hire_slots 파라미터로 조절 (이전에는 9로 하드코딩되어 있었다)
-        hires = min(P['max_hands'], P['hire_slots'])
+        target = P['max_hands']
+        if P['hire_ramp'] and day < P['hire_ramp_day']:
+            target = P['hire_early']
+        hires = min(target, P['hire_slots'])
         fibs, a, b = [], 1, 1
         for _ in range(hires):
             fibs.append(a)
@@ -250,6 +275,14 @@ def act(obs):
         elif want_sheep > 0 and money >= ANIMALS['SHEEP']['cost'] + feed_buffer + work_cap                 and afford(ANIMALS['SHEEP']['cost'] + feed_buffer):
             market.append(['BUY_ANIMAL', 'SHEEP', 1])
 
+    # 멜론 씨앗 — 초반 자본용이라 딸기보다 먼저 산다.
+    # 나는 '마을 흡수량 30개뿐'이라며 배제했으나, 상위권(v16rc5)은 20그루를 심어
+    # 112개를 팔았다. 타일당 수익 1위($109/타일일)라 자본 형성 속도가 압도적이다.
+    if len(market) < 9 and P['target_melon'] > 0 and day <= P['melon_last_day'] \
+            and melon_t + seeds.get('MELON', 0) < P['target_melon'] \
+            and afford(CROPS['MELON']['seed'] * 2):
+        market.append(['BUY_SEED', 'MELON', 2])
+
     if len(market) < 9 and seeds.get('WHEAT', 0) < 4 and afford(CROPS['WHEAT']['seed'] * 4):
         market.append(['BUY_SEED', 'WHEAT', 4])
     if len(market) < 9 and straw + seeds.get('STRAWBERRY', 0) < P['target_straw'] \
@@ -269,7 +302,8 @@ def act(obs):
             have -= (n_animals + pending_a) * 7
             if have <= 0:
                 continue
-        cap = max(1, int(TOWN_DAILY.get(prod, 1) * P['sell_frac']))
+        cap = (P['fert_sell_cap'] if prod == 'FERTILIZER'
+               else max(1, int(TOWN_DAILY.get(prod, 1) * P['sell_frac'])))
         qty = have if urgent else min(have, cap)
         if qty > 0:
             market.append(['SELL', prod, qty])
@@ -282,6 +316,8 @@ def act(obs):
                               + shed.get('SHEEP', 0)) - structs_now)
     straw_budget = max(0, min(seeds.get('STRAWBERRY', 0), cap_straw - straw))
     wheat_budget = max(0, min(seeds.get('WHEAT', 0), P['wheat_tiles'] - wheat_t))
+    melon_budget = (max(0, min(seeds.get('MELON', 0), P['target_melon'] - melon_t))
+                    if day <= P['melon_last_day'] else 0)
     if day < P['wheat_first_days']:
         # 개시 단계: 목장·딸기보다 밀이 먼저다 (2일 만에 현금이 돈다)
         build_budget = 0
@@ -315,7 +351,7 @@ def act(obs):
                         if not t.get('cared_today'):
                             tasks.append((3, (x, y), 'CARE', None))  # v16rc5의 2위 행동
                         if t.get('fertilizer_available'):
-                            tasks.append((6, (x, y), 'COLLECT_FERTILIZER', None))
+                            tasks.append((P['fert_priority'], (x, y), 'COLLECT_FERTILIZER', None))
                     else:
                         # 빈 구조물 — 동물을 '들고 있는' 유닛만 배치할 수 있다.
                         # (PLACE는 인벤토리에서 꺼낸다. 창고에 있으면 PICKUP이 먼저다)
@@ -332,6 +368,9 @@ def act(obs):
             if build_budget > 0:
                 tasks.append((4, (x, y), 'BUILD_PASTURE', None))
                 build_budget -= 1
+            elif melon_budget > 0:
+                tasks.append((5, (x, y), 'PLANT', 'MELON'))
+                melon_budget -= 1
             elif straw_budget > 0:
                 tasks.append((5, (x, y), 'PLANT', 'STRAWBERRY'))
                 straw_budget -= 1
