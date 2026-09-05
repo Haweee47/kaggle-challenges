@@ -32,7 +32,13 @@ optuna.logging.set_verbosity(optuna.logging.WARNING)
 
 from arena import match                      # noqa: E402
 import importlib                             # noqa: E402
-from v0_melon import act as OPPONENT         # noqa: E402
+# 상대를 환경변수로 교체 가능하게 한다.
+# 약한 상대로 튜닝하면 '약한 상대를 이기는 법'만 배운다는 것을 466점으로 배웠다.
+_OPP = os.environ.get('TUNE_OPP', '')
+if _OPP:
+    OPPONENT = _OPP            # .py 경로 문자열도 kaggle_environments가 받아준다
+else:
+    from v0_melon import act as OPPONENT   # noqa: E402
 
 AGENT_MOD = os.environ.get('TUNE_AGENT', 'v1_demand')
 v1_demand = importlib.import_module(AGENT_MOD)   # 이름은 유지 (아래 코드 재사용)
