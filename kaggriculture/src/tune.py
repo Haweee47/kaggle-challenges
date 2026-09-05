@@ -31,8 +31,11 @@ sys.path.insert(0, os.path.join(ROOT, 'agents'))
 optuna.logging.set_verbosity(optuna.logging.WARNING)
 
 from arena import match                      # noqa: E402
-import v1_demand                             # noqa: E402
+import importlib                             # noqa: E402
 from v0_melon import act as OPPONENT         # noqa: E402
+
+AGENT_MOD = os.environ.get('TUNE_AGENT', 'v1_demand')
+v1_demand = importlib.import_module(AGENT_MOD)   # 이름은 유지 (아래 코드 재사용)
 
 # 탐색 공간 — 영향이 클 것으로 보이는 16개
 SPACE = {
